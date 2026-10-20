@@ -1,0 +1,6 @@
+# credentials
+.env
+# generated page and cached account data (balances, account numbers)
+output/
+data/
+__pycache__/
