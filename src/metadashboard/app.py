@@ -657,6 +657,7 @@ def main():
 
     async def _main(page: ft.Page):
         page.window.width, page.window.height = 1400, 1000
+        page.window.icon = str(shortcuts.ICON)
         App(page, store, a.demo)
 
     ft.run(_main, view=ft.AppView.WEB_BROWSER if a.web else ft.AppView.FLET_APP)
