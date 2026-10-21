@@ -18,7 +18,7 @@ metadashboard = "metadashboard.app:main"
 metadashboard-fetch = "metadashboard.core:main"
 
 [project.gui-scripts]
-# no console window; used by the shortcuts install.ps1 makes
+# no console window; target of the shortcuts from metadashboard --install-shortcuts
 metadashboard-gui = "metadashboard.app:gui"
 
 [build-system]

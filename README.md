@@ -4,19 +4,24 @@ Profit calendar for several MetaTrader 5 accounts: daily, monthly and yearly pro
 
 ## Install (Windows)
 
-In PowerShell:
+1. Install [uv](https://docs.astral.sh/uv/) (skip if you have it), in PowerShell:
 
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/yohannaftali/MetaDashboard/main/install.ps1 | iex"
-```
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
 
-The installer ([`install.ps1`](install.ps1)) installs [uv](https://docs.astral.sh/uv/) if it is missing, then MetaDashboard as a uv tool (its own Python and packages, nothing system-wide), and adds a **MetaDashboard** shortcut to the Start menu and the desktop. It also puts `metadashboard` and `metadashboard-fetch` on your `PATH`. Run the same command again to update. Settings and data are kept in `%LOCALAPPDATA%\MetaDashboard`.
+   Then open a **new** PowerShell window, so `uv` is on your `PATH`.
+2. Install MetaDashboard and add its Start menu and desktop shortcuts:
 
-To uninstall (keeps `%LOCALAPPDATA%\MetaDashboard`; delete it to remove your accounts and data too):
+   ```powershell
+   uv tool install https://github.com/yohannaftali/MetaDashboard/archive/refs/heads/main.zip
+   metadashboard --install-shortcuts
+   ```
 
-```powershell
-powershell -ExecutionPolicy ByPass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/yohannaftali/MetaDashboard/main/install.ps1))) -Uninstall"
-```
+uv installs MetaDashboard with its own Python and packages (nothing system-wide) and puts `metadashboard` and `metadashboard-fetch` on your `PATH`. Settings and data are kept in `%LOCALAPPDATA%\MetaDashboard`. The first start downloads the Flet window client once and can take a minute.
+
+- **Update:** `uv tool install --force --reinstall-package metadashboard https://github.com/yohannaftali/MetaDashboard/archive/refs/heads/main.zip`
+- **Uninstall:** `metadashboard --remove-shortcuts`, then `uv tool uninstall metadashboard`. This keeps `%LOCALAPPDATA%\MetaDashboard` (your accounts, with encrypted investor passwords, and the fetched history); delete it to remove those too.
 
 From a clone instead: install uv, then `uv run metadashboard` in the folder. The first `uv run` creates `.venv` with Flet 0.86.4 and the `MetaTrader5` package (Windows only); Python 3.11+. A clone keeps `data/` and `output/` in its own folder.
 

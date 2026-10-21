@@ -27,7 +27,7 @@ from .store import Store
 from .terminal import Terminal
 
 SRC = Path(__file__).resolve().parents[2]  # the project folder when run from a checkout (src/metadashboard/core.py)
-# a checkout keeps data/ and output/ next to the code; an installed copy (install.ps1) in %LOCALAPPDATA%\MetaDashboard
+# a checkout keeps data/ and output/ next to the code; an installed copy (uv tool install) in %LOCALAPPDATA%\MetaDashboard
 ROOT = Path(os.environ.get('METADASHBOARD_HOME') or (SRC if (SRC / 'pyproject.toml').exists() else
             Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'MetaDashboard'))
 OUT = ROOT / 'output'
