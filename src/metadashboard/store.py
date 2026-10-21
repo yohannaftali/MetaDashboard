@@ -75,24 +75,24 @@ class Store:
         sql = 'SELECT * FROM accounts' + (' WHERE enabled = 1' if enabled_only else '') + ' ORDER BY id'
         out = []
         for r in self.db.execute(sql):
-            a = dict(id=r['id'], name=r['name'], login=r['login'], server=r['server'], enabled=bool(r['enabled']))
+            a = dict(id=r['id'], name=r['name'], login=r['login'], server=r['server'], enabled=bool(r['enabled']),
+                     has_password=bool(r['password']))
             if with_password:
                 a['password'] = decrypt(r['password'])
             out.append(a)
         return out
 
     def save_account(self, name, login, server, password=None, enabled=True, id=None):
-        """Insert (id None) or update. On update an empty password keeps the stored one."""
+        """Insert (id None) or update. On update an empty password keeps the stored one. Without a password the
+        terminal's saved one is used (logged in there once with "Save password")."""
         name, server = (name or '').strip(), (server or '').strip()
         login = int(login)
         if not name or not server or login <= 0:
             raise ValueError('name, login and server are required')
         with self.db:
             if id is None:
-                if not password:
-                    raise ValueError('investor password is required')
                 cur = self.db.execute('INSERT INTO accounts (name, login, server, password, enabled) VALUES (?, ?, ?, ?, ?)',
-                                      (name, login, server, encrypt(password), int(enabled)))
+                                      (name, login, server, encrypt(password) if password else '', int(enabled)))
                 return cur.lastrowid
             cur = self.db.execute('UPDATE accounts SET name = ?, login = ?, server = ?, enabled = ? WHERE id = ?',
                                   (name, login, server, int(enabled), id))

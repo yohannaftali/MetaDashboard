@@ -5,3 +5,5 @@ output/
 data/
 __pycache__/
 .venv/
+# the monitoring terminal copy made in Settings
+mt5/
