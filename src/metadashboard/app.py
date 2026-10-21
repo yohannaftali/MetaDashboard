@@ -37,7 +37,7 @@ LIGHT = dict(bg='#f6f7f9', panel='#ffffff', text='#1d2330', muted='#6b7280', lin
 DARK = dict(bg='#0f1218', panel='#171b23', text='#e6e8ec', muted='#8b93a1', line='#262c37', pos='#22c55e',
             neg='#f85149', accent='#60a5fa', weekend='#1b2029')
 NARROW = 720
-# one colour per account in the Compare view, in account order (never by rank): the dataviz reference categorical
+# one colour per account in the Chart tab, in account order (never by rank): the dataviz reference categorical
 # palette, validated for colour-blind readers on LIGHT / DARK panel (light: relief = the table under the charts)
 SERIES_LIGHT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
 SERIES_DARK = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
@@ -126,14 +126,14 @@ class App:
         self.lock = threading.Lock()  # one MT5 session at a time
         self.stale = set()
         today = dt.date.today()
-        self.acc, self.view, self.y, self.m, self.d = 'all', 'month', today.year, today.month - 1, today.day
-        self.cmode = 'month'  # Compare: 'day', 'month' or 'year'
+        self.acc, self.y, self.m, self.d = 'all', today.year, today.month - 1, today.day
+        self.tab, self.mode = 'calendar', 'month'  # tab: calendar / chart; mode: day / month / year (both tabs)
         self.suggestions, self.focused, self.blurred = {}, None, (None, 0.0)
         self.dark = page.platform_brightness == ft.Brightness.DARK
         self.narrow = False
         self.busy = False
         self.session = False  # the monitoring terminal is open for the user to log in: no fetch meanwhile
-        page.title = 'Profit Calendar'
+        page.title = 'Meta Dashboard'
         page.padding = 0
         page.spacing = 0
         page.theme = ft.Theme(color_scheme_seed=LIGHT['accent'])
@@ -182,14 +182,16 @@ class App:
         self.page.bgcolor = self.C['bg']
         if not self.accounts:
             parts = [self.empty()]
-        elif self.view == 'compare':
+        elif self.tab == 'chart':
             parts = [self.compare(), self.note()]
         else:
             parts = [self.cards(), self.calendar(), self.note()]
         body = ft.Column(parts,
                          spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)
         self.page.controls.clear()
-        self.page.controls.extend([self.header(), ft.Container(body, padding=16, expand=True)])
+        self.page.controls.extend([self.header()] + ([self.toolbar()] if self.accounts else [])
+                                  + [ft.Container(body, padding=ft.Padding.only(left=16, right=16, bottom=16),
+                                                  expand=True)])
         self.page.update()
 
     def text(self, value, size=14, color=None, weight=None, **kw):
@@ -203,24 +205,19 @@ class App:
         return ft.Container(content, **kw)
 
     def header(self):
-        C, items = self.C, [self.text('Profit Calendar', 18, weight=ft.FontWeight.BOLD)]
+        C, items = self.C, [self.text('Meta Dashboard', 18, weight=ft.FontWeight.BOLD)]
         if self.accounts:
             names = {'all': 'All accounts'}
             for i, a in enumerate(self.accounts):
                 names[str(i)] = '%s%s (%s)' % (a['name'], ' · %s' % a['login'] if a['login'] else '', a['currency'])
             items += [
+                ft.SegmentedButton(segments=[ft.Segment('calendar', label=ft.Text('Calendar'),
+                                                        icon=ft.Icons.CALENDAR_VIEW_MONTH),
+                                             ft.Segment('chart', label=ft.Text('Chart'), icon=ft.Icons.BAR_CHART)],
+                                   selected=[self.tab], show_selected_icon=False, on_change=self.on_tab),
+                # the chart compares all accounts; the calendar shows one or all of them
                 ft.Dropdown(value=self.acc, options=[ft.DropdownOption(key=k, text=names[k]) for k in self.keys()],
-                            on_select=self.on_account, dense=True, width=300, visible=self.view != 'compare'),
-                ft.SegmentedButton(segments=[ft.Segment('year', label=ft.Text('Year')),
-                                             ft.Segment('month', label=ft.Text('Month')),
-                                             ft.Segment('compare', label=ft.Text('Compare'))],
-                                   selected=[self.view], show_selected_icon=False, on_change=self.on_view),
-                ft.Row([ft.IconButton(ft.Icons.CHEVRON_LEFT, tooltip='Previous', on_click=lambda e: self.step(-1)),
-                        ft.TextButton(self.period_label(), icon=ft.Icons.CALENDAR_MONTH, on_click=self.pick_date,
-                                      tooltip='Pick a date', style=ft.ButtonStyle(color=C['text'])),
-                        ft.IconButton(ft.Icons.CHEVRON_RIGHT, tooltip='Next', on_click=lambda e: self.step(1))],
-                       spacing=0, tight=True),
-                ft.OutlinedButton('Today', on_click=self.on_today),
+                            on_select=self.on_account, dense=True, width=300, visible=self.tab == 'calendar'),
             ]
         items += [
             ft.Container(expand=True),
@@ -234,13 +231,33 @@ class App:
                             bgcolor=C['panel'], padding=ft.Padding.symmetric(vertical=12, horizontal=16),
                             border=ft.Border.only(bottom=ft.BorderSide(1, C['line'])))
 
+    def toolbar(self):
+        """The period, for both tabs: Day / Month / Year, the date (click it for a calendar) and Today."""
+        C = self.C
+        return ft.Container(ft.Row([
+            ft.SegmentedButton(segments=[ft.Segment('day', label=ft.Text('Day')),
+                                         ft.Segment('month', label=ft.Text('Month')),
+                                         ft.Segment('year', label=ft.Text('Year'))],
+                               selected=[self.mode], show_selected_icon=False, on_change=self.on_mode),
+            ft.Row([ft.IconButton(ft.Icons.CHEVRON_LEFT, tooltip='Previous', on_click=lambda e: self.step(-1)),
+                    ft.TextButton(self.period_label(), icon=ft.Icons.CALENDAR_MONTH, on_click=self.pick_date,
+                                  tooltip='Pick a date', style=ft.ButtonStyle(color=C['text'])),
+                    ft.IconButton(ft.Icons.CHEVRON_RIGHT, tooltip='Next', on_click=lambda e: self.step(1))],
+                   spacing=0, tight=True),
+            ft.OutlinedButton('Today', on_click=self.on_today),
+        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(vertical=12, horizontal=16))
+
     def empty(self):
         return self.box(self.text('No account data yet. Open Settings to add the MT5 terminal and your accounts, '
                                   'then press Refresh.', color=self.C['muted'], text_align=ft.TextAlign.CENTER),
                         padding=32, alignment=ft.Alignment.CENTER)
 
-    def bounds(self):
-        if self.view == 'year':
+    def bounds(self, mode=None):
+        mode = mode or self.mode
+        if mode == 'day':
+            return (self.date().isoformat(),) * 2
+        if mode == 'year':
             return iso(self.y, 0, 1), iso(self.y, 11, 31)
         return iso(self.y, self.m, 1), iso(self.y, self.m, 31)
 
@@ -252,7 +269,7 @@ class App:
         bal = sum(a['balance'] * rate(a) for a in accs)
         eq = sum(a['equity'] * rate(a) for a in accs)
         money = lambda v: '{:,.2f}'.format(v) + (' ' + cur if cur != 'mixed' else '')
-        label = 'Year' if self.view == 'year' else 'Month'
+        label = self.mode.title()
         sign = self.sign_color(P['pl'])
         cards = [('Balance', money(bal), None), ('Equity', money(eq), None),
                  (label + ' P/L', fmt_amt(P['pl'], cur), sign), (label + ' %', fmt_pct(P['pct']) or '-', sign),
@@ -275,10 +292,10 @@ class App:
 
     def calendar(self):
         D = combined_days(self.accounts, self.acc)
-        frm, to = self.bounds()
+        frm, to = self.bounds('year' if self.mode == 'year' else 'month')  # Day: its month, the day highlighted
         cap = max([1] + [abs(day_pct(v) or 0) for d, v in D.items() if frm <= d <= to])
         cur = currency(self.accounts, self.acc)
-        return self.year_view(D, cap, cur) if self.view == 'year' else self.month_view(D, cap, cur)
+        return self.year_view(D, cap, cur) if self.mode == 'year' else self.month_view(D, cap, cur)
 
     def year_view(self, D, cap, cur):
         C, today, months = self.C, dt.date.today().isoformat(), []
@@ -310,6 +327,7 @@ class App:
 
     def month_view(self, D, cap, cur):
         C, today = self.C, dt.date.today().isoformat()
+        chosen = self.date().isoformat() if self.mode == 'day' else None
         first_day = dt.date(self.y, self.m + 1, 1)
         start = first_day - dt.timedelta(days=first_day.weekday())
         last = first_day.replace(day=calendar.monthrange(self.y, self.m + 1)[1])
@@ -347,8 +365,9 @@ class App:
                     ft.Column(lines, spacing=0), expand=10, height=height, border_radius=10,
                     padding=ft.Padding.symmetric(vertical=6, horizontal=4 if self.narrow else 8),
                     bgcolor=bg or (C['weekend'] if i >= 5 else C['panel']), opacity=1 if in_month else 0.35,
-                    border=ft.Border.all(2, C['accent']) if k == today else ft.Border.all(1, C['line']),
-                    tooltip=tip))
+                    border=(ft.Border.all(3, C['text']) if k == chosen else ft.Border.all(2, C['accent'])
+                            if k == today else ft.Border.all(1, C['line'])),
+                    tooltip=tip, on_click=(lambda e, day=day: self.pick_day(day)) if in_month else None))
             if week_col:
                 lines = [self.text('W%d' % (w + 1), 12, C['muted']), ft.Container(expand=True)]
                 if wstart:
@@ -375,19 +394,12 @@ class App:
     def trading_days(self):
         return sorted({d for a in self.accounts for d, v in a['days'].items() if v['trades'] or v['pl']})
 
-    def compare_bounds(self):
-        if self.cmode == 'day':
-            return (self.date().isoformat(),) * 2
-        if self.cmode == 'year':
-            return iso(self.y, 0, 1), iso(self.y, 11, 31)
-        return iso(self.y, self.m, 1), iso(self.y, self.m, 31)
-
     def compare(self):
         """The selected day, month or year of every account side by side: one bar each, plus a table."""
-        frm, to = self.compare_bounds()
-        if self.cmode == 'day':
+        frm, to = self.bounds()
+        if self.mode == 'day':
             title = 'Daily profit %% · %s' % self.date().strftime('%A %d %B %Y')
-        elif self.cmode == 'month':
+        elif self.mode == 'month':
             title = 'Monthly profit %% · %s %d' % (MONTHS[self.m], self.y)
         else:
             title = 'Yearly profit %% · %d' % self.y
@@ -398,15 +410,11 @@ class App:
             p = P['pct'] if traded else None
             tip = '%s: %s (%s)' % (a['name'], fmt_pct(p), fmt_amt(P['pl'], a['currency'])) if traded else None
             groups.append((a['name'], [(p, tip, self.series_color(i))]))
-        modes = ft.SegmentedButton(segments=[ft.Segment('day', label=ft.Text('Day')),
-                                             ft.Segment('month', label=ft.Text('Month')),
-                                             ft.Segment('year', label=ft.Text('Year'))],
-                                   selected=[self.cmode], show_selected_icon=False, on_change=self.on_cmode)
-        return ft.Column([modes, self.bar_chart(title, groups, values=True), self.compare_table(frm, to)], spacing=16)
+        return ft.Column([self.bar_chart(title, groups, values=True), self.compare_table(frm, to)], spacing=16)
 
-    def on_cmode(self, e):
-        self.cmode = e.control.selected[0] if e.control.selected else self.cmode
-        if self.cmode == 'day':  # a day without trades shows nothing: start at the last trading day up to it
+    def on_mode(self, e):
+        self.mode = e.control.selected[0] if e.control.selected else self.mode
+        if self.mode == 'day':  # a day without trades shows nothing: start at the last trading day up to it
             days = [d for d in self.trading_days() if d <= self.date().isoformat()]
             if days and days[-1] != self.date().isoformat():
                 self.y, self.m, self.d = int(days[-1][:4]), int(days[-1][5:7]) - 1, int(days[-1][8:])
@@ -472,7 +480,7 @@ class App:
 
     def compare_table(self, frm, to):
         """The same numbers as a table: identity and values without relying on colour."""
-        C, day = self.C, self.cmode == 'day'
+        C, day = self.C, self.mode == 'day'
         cols = [('Account', 4), ('Profit %', 2), ('P/L', 3), ('Closed trades', 2)]
         cols += [('Start balance', 3)] if day else [('Win / loss days', 2), ('Best day', 2), ('Worst day', 2)]
         rows = [ft.Row([self.text(t, 12, C['muted'], expand=w) for t, w in cols])]
@@ -500,9 +508,9 @@ class App:
 
     # ------------------------------------------------------------------ dates and suggestions
     def period_label(self):
-        if self.view == 'year' or (self.view == 'compare' and self.cmode == 'year'):
+        if self.mode == 'year':
             return str(self.y)
-        if self.view == 'compare' and self.cmode == 'day':
+        if self.mode == 'day':
             return self.date().strftime('%d %b %Y')
         return '%s %d' % (MONTHS[self.m], self.y)
 
@@ -575,21 +583,25 @@ class App:
         self.acc = e.control.value
         self.render()
 
-    def on_view(self, e):
-        self.view = e.control.selected[0] if e.control.selected else self.view
+    def on_tab(self, e):
+        self.tab = e.control.selected[0] if e.control.selected else self.tab
         self.render()
 
     def open_month(self, m):
-        self.m, self.view = m, 'month'
+        self.m, self.mode = m, 'month'
         self.render()
 
+    def pick_day(self, day):
+        self.mode = 'day'
+        self.set_date(day)
+
     def step(self, d):
-        if self.view == 'compare' and self.cmode == 'day':  # to the previous / next day with trades
+        if self.mode == 'day':  # to the previous / next day with trades
             here = self.date().isoformat()
             days = [x for x in self.trading_days() if (x > here if d > 0 else x < here)]
             nxt = dt.date.fromisoformat(days[0] if d > 0 else days[-1]) if days else self.date() + dt.timedelta(days=d)
             return self.set_date(nxt)
-        if self.view == 'year' or (self.view == 'compare' and self.cmode == 'year'):
+        if self.mode == 'year':
             self.y += d
         else:
             self.y, self.m = divmod(self.y * 12 + self.m + d, 12)
@@ -685,7 +697,7 @@ class Settings:
             ft.Row([self.name, self.login]),
             ft.Row([self.server, self.password]),
             ft.Row([self.start, self.enabled, ft.Container(expand=True), self.cancel, self.save]),
-            ft.Text('Count from: only the history from that date counts (calendar, Compare, totals), e.g. for an old '
+            ft.Text('Count from: only the history from that date counts (Calendar, Chart, totals), e.g. for an old '
                     'account that traded another strategy before. Empty = the whole history. Grey text in an empty '
                     'field is a suggestion: press Tab or → to use it.', size=12, color=app.C['muted']),
             ft.Text('Investor (read-only) password only, and only when it is not saved in the monitoring terminal. It '
