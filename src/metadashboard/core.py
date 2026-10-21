@@ -108,9 +108,13 @@ def daily_rows(deals):
 
 def fetch_mt5(acc, terminal, on_login=None):
     import MetaTrader5 as mt5
-    if not mt5.initialize(path=terminal, login=acc['login'], password=acc['password'], server=acc['server'],
-                          portable=True, timeout=60000):
-        raise RuntimeError('MT5 login failed for %s: %s' % (acc['name'], mt5.last_error()))
+    # without a password the terminal uses the one saved at its last login to this account
+    password = dict(password=acc['password']) if acc.get('password') else {}
+    if not mt5.initialize(path=terminal, login=acc['login'], server=acc['server'], portable=True, timeout=60000,
+                          **password):
+        hint = '' if password else (' (no password saved in the terminal: Settings > Log in to accounts, '
+                                    'log in once with "Save password" ticked)')
+        raise RuntimeError('MT5 login failed for %s: %s%s' % (acc['name'], mt5.last_error(), hint))
     try:
         if on_login:
             on_login()

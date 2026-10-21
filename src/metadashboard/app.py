@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import calendar
 import datetime as dt
+import subprocess
 import sys
 import threading
 import time
@@ -19,8 +20,9 @@ from pathlib import Path
 
 import flet as ft
 
-from . import shortcuts
+from . import monitor, shortcuts
 from .core import CACHE, DB, ROOT, demo_accounts, fetch_all, load_cached, open_store
+from .terminal import running
 
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
           'November', 'December']
@@ -103,6 +105,7 @@ class App:
         self.dark = page.platform_brightness == ft.Brightness.DARK
         self.narrow = False
         self.busy = False
+        self.session = False  # the monitoring terminal is open for the user to log in: no fetch meanwhile
         page.title = 'Profit Calendar'
         page.padding = 0
         page.spacing = 0
@@ -127,7 +130,7 @@ class App:
         while True:
             await asyncio.sleep(20)
             n = self.minutes()
-            if n and not self.busy and time.monotonic() - self.last_refresh >= n * 60:
+            if n and not self.busy and not self.session and time.monotonic() - self.last_refresh >= n * 60:
                 self.on_refresh(auto=True)
 
     def load(self):
@@ -374,7 +377,7 @@ class App:
         self.render()
 
     def on_refresh(self, e=None, auto=False):
-        if self.busy:
+        if self.busy or self.session:
             return
         self.busy = True
         self.render()
@@ -411,8 +414,10 @@ class Settings:
     def __init__(self, app):
         self.app, self.store, self.page = app, app.store, app.page
         self.editing, self.changed = None, False
-        self.term = ft.TextField(label='terminal64.exe path', value=self.store.get('terminal_path'),
-                                 hint_text=r'C:\MT5-Monitor\terminal64.exe', dense=True, expand=True)
+        self.term = ft.TextField(label='Or an existing monitoring terminal: terminal64.exe path',
+                                 value=self.store.get('terminal_path'), hint_text=r'C:\MT5-Monitor\terminal64.exe',
+                                 dense=True, expand=True)
+        self.term_box = ft.Column(spacing=8)
         self.auto = ft.TextField(label='Auto refresh, minutes (0 = off)', value=str(app.minutes()), dense=True,
                                  width=260, keyboard_type=ft.KeyboardType.NUMBER,
                                  input_filter=ft.NumbersOnlyInputFilter())
@@ -421,8 +426,8 @@ class Settings:
         self.login = ft.TextField(label='Login', hint_text='12345678', dense=True, expand=True,
                                   keyboard_type=ft.KeyboardType.NUMBER, input_filter=ft.NumbersOnlyInputFilter())
         self.server = ft.TextField(label='Server', hint_text='VantageInternational-Live 3', dense=True, expand=True)
-        self.password = ft.TextField(label='Investor password', password=True, can_reveal_password=True, dense=True,
-                                     expand=True)
+        self.password = ft.TextField(label='Investor password (optional)', password=True, can_reveal_password=True,
+                                     dense=True, expand=True)
         self.enabled = ft.Checkbox(label='Include in the dashboard', value=True)
         self.form_title = ft.Text('Add account', size=12, weight=ft.FontWeight.W_600)
         self.cancel = ft.TextButton('Cancel', visible=False, on_click=lambda e: self.reset())
@@ -432,9 +437,10 @@ class Settings:
         section = lambda t: ft.Text(t.upper(), size=12, weight=ft.FontWeight.W_600, color=app.C['muted'])
         content = ft.Column([
             section('MT5 terminal'),
+            self.term_box,
             ft.Row([self.term, ft.OutlinedButton('Save', on_click=self.on_terminal)]),
-            ft.Text("Use a terminal for monitoring only: logging in switches that terminal's account, so never use "
-                    "the terminal that runs your EAs.", size=12, color=warn),
+            ft.Text("Logging in switches the account of this terminal, so it must be a copy used only by MetaDashboard, "
+                    "never the terminal that runs your EAs.", size=12, color=warn),
             ft.Divider(),
             section('Auto refresh'),
             ft.Row([self.auto, ft.OutlinedButton('Save', on_click=self.on_auto)]),
@@ -446,17 +452,21 @@ class Settings:
             self.rows,
             ft.Divider(),
             self.form_title,
+            ft.Text('Only needed for an account the terminal has not saved: accounts logged in to the monitoring '
+                    'terminal are added by themselves.', size=12, color=app.C['muted']),
             ft.Row([self.name, self.login]),
             ft.Row([self.server, self.password]),
             ft.Row([self.enabled, ft.Container(expand=True), self.cancel, self.save]),
-            ft.Text('Investor (read-only) password only. It is stored encrypted for your Windows user and never shown '
-                    'again; leave it empty when editing to keep it.', size=12, color=app.C['muted']),
+            ft.Text('Investor (read-only) password only, and only when it is not saved in the monitoring terminal. It '
+                    'is stored encrypted for your Windows user and never shown again; leave it empty when editing to '
+                    'keep it.', size=12, color=app.C['muted']),
             self.msg,
         ], spacing=10, tight=True, scroll=ft.ScrollMode.AUTO, width=720)
         self.dlg = ft.AlertDialog(
             title=ft.Row([ft.Text('Settings'), ft.IconButton(ft.Icons.CLOSE, tooltip='Close', on_click=self.close)],
                          alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             content=content, on_dismiss=self.on_dismiss)
+        self.show_terminal()
         self.show_accounts()
 
     def open(self):
@@ -473,6 +483,88 @@ class Settings:
         self.msg.value = text
         self.msg.color = self.app.C['neg'] if bad else None
         self.page.update()
+
+    def show_terminal(self):
+        """Create the monitoring terminal, or open it to log in to the accounts."""
+        C, path = self.app.C, self.store.get('terminal_path')
+        muted = dict(size=12, color=C['muted'])
+        if path and Path(path).is_file():
+            self.term_box.controls = [
+                ft.Row([ft.Icon(ft.Icons.CHECK_CIRCLE, color=C['pos'], size=18),
+                        ft.Text(path, expand=True, selectable=True)]),
+                ft.Row([ft.FilledButton('Log in to accounts', icon=ft.Icons.LOGIN, on_click=self.on_session,
+                                        disabled=self.app.session),
+                        ft.OutlinedButton('Find accounts', icon=ft.Icons.SEARCH, on_click=lambda e: self.find())]),
+                ft.Text('Log in to accounts opens the monitoring terminal. Log in once to each account (File > Login '
+                        'to Trade Account) with its investor password and "Save password" ticked, then close the '
+                        'terminal: the accounts are added below and fetched.', **muted),
+            ]
+            return
+        sources = monitor.installed_terminals()
+        if not sources:
+            self.term_box.controls = [ft.Text('No MetaTrader 5 found in Program Files. Install MetaTrader 5 (from '
+                                              'your broker or metatrader5.com), then open Settings again.',
+                                              size=12, color=C['neg'])]
+            return
+        self.source = ft.Dropdown(label='Copy from', value=str(sources[0]), dense=True, expand=True,
+                                  options=[ft.DropdownOption(key=str(p), text=str(p.parent)) for p in sources])
+        self.create_btn = ft.FilledButton('Create monitoring terminal', icon=ft.Icons.ADD, on_click=self.on_create)
+        self.term_box.controls = [
+            ft.Text('MetaDashboard makes its own copy of MetaTrader 5 to log in with, with the broker servers your '
+                    'MetaTrader knows (not its logins). Your MetaTrader is not started or changed.', **muted),
+            ft.Row([self.source, self.create_btn]),
+        ]
+
+    def on_create(self, e):
+        self.create_btn.disabled = True
+        self.say('Copying MetaTrader 5, this takes a moment…')
+        self.page.run_thread(self.create, Path(self.source.value))
+
+    def create(self, source):
+        try:
+            exe = monitor.create(source, ROOT / 'mt5', log=print)
+        except Exception as err:
+            self.create_btn.disabled = False
+            return self.say('Could not copy MetaTrader 5: %s' % err, True)
+        self.store.set('terminal_path', str(exe))
+        self.term.value = str(exe)
+        self.show_terminal()
+        self.say('Monitoring terminal ready. Next: Log in to accounts.')
+
+    def on_session(self, e):
+        if self.app.busy:
+            return self.say('Wait until the refresh has finished.', True)
+        path = self.store.get('terminal_path')
+        self.app.session = True
+        self.show_terminal()
+        self.say('The monitoring terminal is open: log in to each account with "Save password" ticked, then close it.')
+        if not running(path):
+            subprocess.Popen([path, '/portable'], cwd=str(Path(path).parent))
+        self.page.run_thread(self.session_done, path)
+
+    def session_done(self, path):
+        time.sleep(5)
+        while running(path):  # until the user closes the terminal
+            time.sleep(2)
+        self.app.session = False
+        self.show_terminal()
+        if self.find():
+            self.app.on_refresh()
+
+    def find(self):
+        """Add the accounts that have logged in to the monitoring terminal; returns how many were new."""
+        path = self.store.get('terminal_path')
+        known = {(a['login'], a['server']) for a in self.store.accounts()}
+        new = [a for a in monitor.accounts(path) if a not in known] if path else []
+        for login, server in new:
+            self.store.save_account(monitor.broker(server), login, server)
+        self.show_accounts()
+        if new:
+            self.changed = True
+            self.say('Added: %s.' % ', '.join('%s %d' % (monitor.broker(s), l) for l, s in new))
+        else:
+            self.say('No new accounts in the monitoring terminal. Log in to accounts first.')
+        return len(new)
 
     def show_accounts(self):
         C, rows = self.app.C, []
@@ -509,6 +601,7 @@ class Settings:
             return self.say('the path must end with terminal64.exe', True)
         self.store.set('terminal_path', path)
         self.changed = True
+        self.show_terminal()
         self.say('Terminal path saved.')
 
     def on_auto(self, e):

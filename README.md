@@ -4,54 +4,29 @@ Profit calendar for several MetaTrader 5 accounts: daily, monthly and yearly pro
 
 ## Install (Windows)
 
-1. Install [uv](https://docs.astral.sh/uv/) (skip if you have it), in PowerShell:
+Paste this into PowerShell (Start menu → type `powershell` → Enter):
 
-   ```powershell
-   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-   ```
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex; & ~\.local\bin\uv.exe tool install --force --reinstall-package metadashboard https://github.com/yohannaftali/MetaDashboard/archive/refs/heads/main.zip; & ~\.local\bin\metadashboard.exe --install-shortcuts"
+```
 
-   Then open a **new** PowerShell window, so `uv` is on your `PATH`.
-2. Install MetaDashboard and add its Start menu and desktop shortcuts:
+It installs [uv](https://docs.astral.sh/uv/) (with uv's official installer), then MetaDashboard with its own Python and packages (nothing system-wide), and adds a **MetaDashboard** shortcut to the Start menu and the desktop. Run the same line again to update (close MetaDashboard first: Windows locks the files of a running app). The first start downloads the Flet window client once and can take a minute.
 
-   ```powershell
-   uv tool install https://github.com/yohannaftali/MetaDashboard/archive/refs/heads/main.zip
-   metadashboard --install-shortcuts
-   ```
+To uninstall: `metadashboard --remove-shortcuts`, then `uv tool uninstall metadashboard`. Your settings stay in `%LOCALAPPDATA%\MetaDashboard`; delete that folder to remove them too.
 
-uv installs MetaDashboard with its own Python and packages (nothing system-wide) and puts `metadashboard` and `metadashboard-fetch` on your `PATH`. Settings and data are kept in `%LOCALAPPDATA%\MetaDashboard`. The first start downloads the Flet window client once and can take a minute.
-
-- **Update:** `uv tool install --force --reinstall-package metadashboard https://github.com/yohannaftali/MetaDashboard/archive/refs/heads/main.zip`
-- **Uninstall:** `metadashboard --remove-shortcuts`, then `uv tool uninstall metadashboard`. This keeps `%LOCALAPPDATA%\MetaDashboard` (your accounts, with encrypted investor passwords, and the fetched history); delete it to remove those too.
-
-From a clone instead: install uv, then `uv run metadashboard` in the folder. The first `uv run` creates `.venv` with Flet 0.86.4 and the `MetaTrader5` package (Windows only); Python 3.11+. A clone keeps `data/` and `output/` in its own folder.
+From a clone instead: install uv, then `uv run metadashboard` in the folder. A clone keeps `data/`, `output/` and `mt5/` in its own folder.
 
 ## Setup
 
-1. Install (above).
-2. Set up a **terminal for monitoring only** (below).
-3. Start **MetaDashboard** from the Start menu (or `metadashboard`; `uv run metadashboard` in a clone). In **Settings** enter the monitoring terminal path (e.g. `C:\MT5-Monitor\terminal64.exe`) and add each account (name, login, server, investor password), then press **Refresh**.
+You need MetaTrader 5 installed (from your broker or [metatrader5.com](https://www.metatrader5.com)). Open **MetaDashboard → Settings**:
 
-### The monitoring terminal
+1. **Create monitoring terminal.** MetaDashboard copies your MetaTrader 5 into its own folder (`%LOCALAPPDATA%\MetaDashboard\mt5`), with the broker servers your MetaTrader knows. It logs in to your accounts there, because a login switches the terminal's account: your own MetaTrader, and the EAs running in it, are never started or changed, and its saved logins are not copied.
+2. **Log in to accounts.** The monitoring terminal opens. Log in once to each account (*File → Login to Trade Account*) with its **investor (read-only) password** and **Save password** ticked. Close the terminal.
+3. That's it: MetaDashboard finds the accounts you logged in to and fetches them. **Find accounts** looks again later, e.g. after logging in to another account.
 
-MetaDashboard logs in to your accounts one after another through an MT5 terminal, and each login switches that terminal's account. So it needs **its own copy of MetaTrader 5**, never the terminal that runs your EAs or that you trade with. One copy serves all your accounts, also from different brokers.
+The terminal keeps the passwords (that's what *Save password* does); MetaDashboard only stores the list of accounts. For an account the terminal cannot log in to by itself, add it by hand under *Add account* with its investor password: that one is stored encrypted with Windows DPAPI (readable only by your Windows user on this PC) and never shown again.
 
-1. **Copy MetaTrader 5 to its own folder.** In PowerShell:
-
-   ```powershell
-   robocopy "C:\Program Files\MetaTrader 5" "C:\MT5-Monitor" /E
-   ```
-
-   Or in File Explorer: copy the folder `C:\Program Files\MetaTrader 5` and paste it as `C:\MT5-Monitor`. If your MT5 came from a broker, its folder may have another name, e.g. `C:\Program Files\Vantage International MetaTrader 5`; copy that one. Any MT5 copy works for every broker.
-2. **Start the copy once in portable mode**, so it keeps its data in its own folder and not in the one of your trading terminal:
-
-   ```powershell
-   & "C:\MT5-Monitor\terminal64.exe" /portable
-   ```
-3. **Add each broker's server.** In that terminal: *File → Open an Account*, type the broker name (e.g. `Vantage`, `Exness`), pick the server of your account (e.g. `VantageInternational-Live 3`) and log in once with the account's **investor password**. Repeat for every broker. You don't need to keep these logins: MetaDashboard logs in itself.
-4. **Close the terminal.** MetaDashboard starts it minimized for each fetch and closes it afterwards.
-5. In MetaDashboard → **Settings**, enter `C:\MT5-Monitor\terminal64.exe` as the terminal path and press **Save**.
-
-The settings live in `data/metadashboard.db` (SQLite; installed: `%LOCALAPPDATA%\MetaDashboard\data`). Investor passwords are encrypted with Windows DPAPI (readable only by your Windows user on this PC) and are never shown again. An existing `.env` (see `.env.example`) is imported once into an empty database; delete `.env` afterwards.
+The settings live in `data/metadashboard.db` (SQLite; installed: `%LOCALAPPDATA%\MetaDashboard\data`). An existing `.env` (see `.env.example`) is imported once into an empty database; delete `.env` afterwards. An existing monitoring terminal (e.g. a copy in `C:\MT5-Monitor`, started once with `/portable`) can be entered instead in Settings.
 
 ## Use
 
