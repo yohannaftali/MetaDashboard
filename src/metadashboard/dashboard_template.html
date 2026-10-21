@@ -132,6 +132,21 @@ function period(D, from, to) {
   }
   return { pl, pct: start ? pl / start * 100 : null, up, down, trades };
 }
+// an account's balance at its first trading day in the period (0: no trades in it)
+function firstStart(days, from, to) {
+  for (const d of Object.keys(days).sort()) if (d >= from && d <= to && days[d].start > 0) return days[d].start;
+  return 0;
+}
+// the selected account(s) over a period; all accounts: the % is on the sum of every account's own balance at its
+// first trading day in the period, not only of the accounts that traded on its first day
+function span(from, to) {
+  const P = period(days(state.acc), from, to);
+  if (state.acc === 'all') {
+    const start = DATA.accounts.reduce((s, a) => s + firstStart(a.days, from, to) * (RATE[a.currency] || 1), 0);
+    P.pct = start ? P.pl / start * 100 : null;
+  }
+  return P;
+}
 const iso = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 const fmtPct = p => p === null || p === undefined ? '' : (p > 0 ? '+' : '') + p.toFixed(2) + '%';
 const fmtAmt = (a, c) => (a > 0 ? '+' : '') + a.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (c && c !== 'mixed' ? ' ' + c : '');
@@ -156,7 +171,7 @@ function render() {
   document.getElementById('period').textContent = state.view === 'year' ? state.y : `${MONTHS[state.m]} ${state.y}`;
   const from = state.view === 'year' ? iso(state.y, 0, 1) : iso(state.y, state.m, 1);
   const to = state.view === 'year' ? iso(state.y, 11, 31) : iso(state.y, state.m, 31);
-  const P = period(D, from, to);
+  const P = span(from, to);
   // cards
   const accs = state.acc === 'all' ? DATA.accounts : [DATA.accounts[state.acc]];
   const r = a => (state.acc === 'all' ? RATE[a.currency] || 1 : 1);
@@ -173,7 +188,7 @@ function render() {
     const cap = Math.max(1, ...Object.entries(D).filter(([d]) => d >= from && d <= to).map(([, v]) => Math.abs(dayPct(v) || 0)));
     let html = '<div class="year">';
     for (let m = 0; m < 12; m++) {
-      const M = period(D, iso(state.y, m, 1), iso(state.y, m, 31));
+      const M = span(iso(state.y, m, 1), iso(state.y, m, 31));
       html += `<div class="mon" data-m="${m}"><h3><span>${MONTHS[m]}</span><span class="${cls(M.pl)}">${fmtPct(M.pct)}</span></h3><div class="mini">`;
       html += DOW.map(d => `<div class="h">${d[0]}</div>`).join('');
       const first = (new Date(state.y, m, 1).getDay() + 6) % 7, n = new Date(state.y, m + 1, 0).getDate();
@@ -193,18 +208,19 @@ function render() {
     const first = (new Date(state.y, state.m, 1).getDay() + 6) % 7, n = new Date(state.y, state.m + 1, 0).getDate();
     const start = new Date(state.y, state.m, 1 - first);
     for (let w = 0; w < 6; w++) {
-      let wpl = 0, wstart = null;
+      const week = [];  // the week's days in this month
       for (let i = 0; i < 7; i++) {
         const day = new Date(start); day.setDate(start.getDate() + w * 7 + i);
         const k = iso(day.getFullYear(), day.getMonth(), day.getDate()), v = D[k], p = dayPct(v);
         const inMonth = day.getMonth() === state.m;
-        if (v && inMonth) { wpl += v.pl; if (wstart === null && v.start > 0) wstart = v.start; }
+        if (inMonth) week.push(k);
         html += `<div class="cell ${i >= 5 ? 'wk' : ''} ${inMonth ? '' : 'out'} ${inMonth && p ? 'hot' : ''} ${k === TODAY ? 'today' : ''}" style="${inMonth ? shade(p, cap) : ''}" title="${v ? `start balance ${v.start.toFixed(2)}${v.deposit ? ', deposit/withdrawal ' + v.deposit.toFixed(2) : ''}` : ''}">
           <div class="n">${day.getDate()}</div>
           ${v && inMonth ? `<div class="p">${fmtPct(p)}</div><div class="a">${fmtAmt(v.pl, cur)}</div><div class="t">${v.trades ? v.trades + ' trade' + (v.trades > 1 ? 's' : '') : ''}</div>` : ''}
         </div>`;
       }
-      html += `<div class="cell week"><div class="n">W${w + 1}</div>${wstart ? `<div class="p ${cls(wpl)}">${fmtPct(wpl / wstart * 100)}</div><div class="a">${fmtAmt(wpl, cur)}</div>` : ''}</div>`;
+      const W = week.length ? span(week[0], week[week.length - 1]) : null;
+      html += `<div class="cell week"><div class="n">W${w + 1}</div>${W && W.pct !== null ? `<div class="p ${cls(W.pl)}">${fmtPct(W.pct)}</div><div class="a">${fmtAmt(W.pl, cur)}</div>` : ''}</div>`;
       if (new Date(start.getFullYear(), start.getMonth(), start.getDate() + (w + 1) * 7) > new Date(state.y, state.m, n)) break;
     }
     view.innerHTML = html + '</div>';
