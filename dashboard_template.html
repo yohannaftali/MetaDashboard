@@ -58,6 +58,29 @@
   .note { color: var(--muted); font-size: 12px; margin-top: 16px; }
   .stale { color: rgb(var(--neg)); }
   .cell, .mon, .card { min-width: 0; }
+  [hidden] { display: none !important; }
+  .empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; padding: 32px 16px; text-align: center; color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: 0.6; cursor: wait; }
+  dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 0; }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+  .dlg { padding: 18px 20px; display: grid; gap: 18px; }
+  .dlg h2 { font-size: 16px; margin: 0; display: flex; justify-content: space-between; align-items: center; }
+  .dlg h3 { font-size: 12px; margin: 0 0 8px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .dlg input[type=text], .dlg input[type=number], .dlg input[type=password] { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: 100%; min-width: 0; }
+  .dlg label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+  .row > label { flex: 1 1 160px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .warn { color: rgb(var(--neg)); }
+  .msg { font-size: 12px; min-height: 1em; margin: 8px 0 0; }
+  table.accs { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.accs th, table.accs td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+  table.accs th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  table.accs td.act { text-align: right; white-space: nowrap; }
+  table.accs button { padding: 3px 8px; font-size: 12px; }
+  .off { opacity: 0.5; }
+  .dlg label.chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
   @media (max-width: 720px) {
     header { gap: 8px; padding: 12px 16px; }
     h1 { font-size: 16px; width: 100%; }
@@ -70,6 +93,7 @@
     .month .wkh, .cell.week { display: none; }
     .cell { min-height: 64px; padding: 4px; }
     .cell .p { font-size: 13px; } .cell .a, .cell .t { display: none; }
+    table.accs .srv { display: none; }
   }
 </style>
 </head>
@@ -83,6 +107,8 @@
   <div class="nav"><button id="prev" aria-label="Previous">&#8249;</button><span id="period"></span><button id="next" aria-label="Next">&#8250;</button></div>
   <button id="today">Today</button>
   <div class="grow"></div>
+  <button id="refresh" hidden>Refresh</button>
+  <button id="settings" hidden>Settings</button>
   <button id="theme" aria-label="Theme">&#9680;</button>
 </header>
 <main>
@@ -90,6 +116,44 @@
   <div id="view"></div>
   <div class="note" id="note"></div>
 </main>
+<dialog id="dlg">
+  <div class="dlg">
+    <h2>Settings <button id="close" aria-label="Close">&#10005;</button></h2>
+    <section>
+      <h3>MT5 terminal</h3>
+      <div class="row">
+        <label>terminal64.exe path<input type="text" id="term" placeholder="C:\MT5-Monitor\terminal64.exe"></label>
+        <button id="termSave">Save</button>
+      </div>
+      <p class="hint warn">Use a terminal for monitoring only: logging in switches that terminal's account, so never use the terminal that runs your EAs.</p>
+    </section>
+    <section>
+      <h3>Accounts</h3>
+      <table class="accs"><thead><tr><th>Name</th><th>Login</th><th class="srv">Server</th><th></th></tr></thead><tbody id="accRows"></tbody></table>
+    </section>
+    <section>
+      <h3 id="formTitle">Add account</h3>
+      <form id="accForm" autocomplete="off">
+        <div class="row">
+          <label>Name<input type="text" name="name" required placeholder="Vantage"></label>
+          <label>Login<input type="number" name="login" required min="1" placeholder="12345678"></label>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label>Server<input type="text" name="server" required placeholder="VantageInternational-Live 3"></label>
+          <label>Investor password<input type="password" name="password" autocomplete="new-password"></label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="chk"><input type="checkbox" name="enabled" checked> Include in the dashboard</label>
+          <div class="grow"></div>
+          <button type="button" id="formCancel" hidden>Cancel</button>
+          <button type="submit" class="primary" id="formSave">Add account</button>
+        </div>
+        <p class="hint">Investor (read-only) password only. It is stored encrypted for your Windows user and never shown again; leave it empty when editing to keep it.</p>
+      </form>
+      <p class="msg" id="msg"></p>
+    </section>
+  </div>
+</dialog>
 <script>
 const DATA = /*__DATA__*/null;
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -142,6 +206,14 @@ function shade(pct, cap) {
 function dayPct(v) { return v && v.start > 0 ? v.pl / v.start * 100 : null; }
 
 function render() {
+  if (!DATA.accounts.length) {
+    document.querySelectorAll('#acc, .seg, .nav, #today').forEach(el => el.hidden = true);
+    document.getElementById('cards').innerHTML = '';
+    document.getElementById('view').innerHTML = '<div class="empty">No account data yet.' +
+      (DATA.app ? ' Open <b>Settings</b> to add the MT5 terminal and your accounts, then press <b>Refresh</b>.' : '') + '</div>';
+    document.getElementById('note').textContent = '';
+    return;
+  }
   const D = days(state.acc), cur = currency(state.acc);
   document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.id === (state.view === 'year' ? 'vYear' : 'vMonth')));
   document.getElementById('period').textContent = state.view === 'year' ? state.y : `${MONTHS[state.m]} ${state.y}`;
@@ -221,7 +293,74 @@ function init() {
     const r = document.documentElement, dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     r.dataset.theme = dark ? 'light' : 'dark';
   };
+  if (DATA.app) initApp();
   render();
+}
+
+// ---------------------------------------------------------------- local app (python metadashboard.py --serve)
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = s => String(s).replace(/[&<>"']/g, c => ESC[c]);
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MetaDashboard': '1' }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt), j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function initApp() {
+  const $ = id => document.getElementById(id), dlg = $('dlg'), form = $('accForm'), msg = $('msg');
+  let cfg = null, editing = null, changed = false;
+  $('refresh').hidden = $('settings').hidden = false;
+  const say = (t, bad) => { msg.textContent = t; msg.className = 'msg' + (bad ? ' warn' : ''); };
+  const resetForm = () => {
+    editing = null; form.reset(); form.enabled.checked = true; form.password.required = true;
+    $('formTitle').textContent = 'Add account'; $('formSave').textContent = 'Add account'; $('formCancel').hidden = true;
+  };
+  const show = c => {
+    cfg = c; $('term').value = c.terminal_path || '';
+    $('accRows').innerHTML = c.accounts.length ? c.accounts.map(a => `<tr class="${a.enabled ? '' : 'off'}">
+      <td>${esc(a.name)}</td><td>${a.login}</td><td class="srv">${esc(a.server)}</td>
+      <td class="act"><button data-edit="${a.id}">Edit</button> <button data-del="${a.id}">Delete</button></td></tr>`).join('')
+      : '<tr><td colspan="4" style="color:var(--muted)">No accounts yet.</td></tr>';
+  };
+  const open = async () => { resetForm(); say(''); show(await api('/api/config')); dlg.showModal(); };
+  $('settings').onclick = open;
+  $('close').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => { if (changed) { changed = false; $('refresh').click(); } });
+  $('termSave').onclick = async () => {
+    try { show(await api('/api/terminal', { terminal_path: $('term').value })); changed = true; say('Terminal path saved.'); }
+    catch (e) { say(e.message, true); }
+  };
+  $('accRows').onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const a = cfg.accounts.find(x => x.id === +(b.dataset.edit || b.dataset.del));
+    if (b.dataset.del) {
+      if (!confirm(`Delete ${a.name} (${a.login})?`)) return;
+      try { show(await api('/api/accounts/delete', { id: a.id })); changed = true; say(`${a.name} deleted.`); if (editing === a.id) resetForm(); }
+      catch (err) { say(err.message, true); }
+      return;
+    }
+    editing = a.id; form.name.value = a.name; form.login.value = a.login; form.server.value = a.server;
+    form.password.value = ''; form.password.required = false; form.enabled.checked = a.enabled;
+    $('formTitle').textContent = `Edit ${a.name}`; $('formSave').textContent = 'Save'; $('formCancel').hidden = false;
+    form.name.focus();
+  };
+  $('formCancel').onclick = resetForm;
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const body = { name: form.name.value, login: +form.login.value, server: form.server.value, password: form.password.value, enabled: form.enabled.checked };
+    if (editing) body.id = editing;
+    try { show(await api('/api/accounts', body)); changed = true; say(`${body.name} saved.`); resetForm(); }
+    catch (err) { say(err.message, true); }
+  };
+  $('refresh').onclick = async () => {
+    const b = $('refresh'); b.disabled = true; b.textContent = 'Refreshing…';
+    try {
+      const r = await api('/api/refresh', {});
+      if (r.log.some(l => l.includes('FAILED'))) alert(r.log.join('\n'));
+      location.reload();
+    } catch (e) { alert(e.message); b.disabled = false; b.textContent = 'Refresh'; }
+  };
+  if (!DATA.accounts.length || location.hash === '#settings') open();
 }
 init();
 </script>
