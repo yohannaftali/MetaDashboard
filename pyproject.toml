@@ -5,7 +5,7 @@ description = "MetaDashboard: profit calendar for several MT5 accounts"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  # Same Flet as flet/senar and tools/release_manager. The desktop extra brings the native window client.
+  # Pinned; the desktop extra brings the native window client.
   "flet[desktop]==0.86.4",
   # Windows only; investor (read-only) logins through a terminal used only for monitoring.
   "MetaTrader5>=5.0.45; sys_platform == 'win32'",
@@ -14,6 +14,10 @@ dependencies = [
 [project.scripts]
 metadashboard = "metadashboard.app:main"
 metadashboard-fetch = "metadashboard.core:main"
+
+[project.gui-scripts]
+# no console window; used by the shortcuts install.ps1 makes
+metadashboard-gui = "metadashboard.app:gui"
 
 [build-system]
 requires = ["hatchling"]

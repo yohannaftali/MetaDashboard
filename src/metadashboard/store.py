@@ -57,7 +57,7 @@ def decrypt(value):
 # --------------------------------------------------------------------------------------------- store
 class Store:
     def __init__(self, path):
-        path.parent.mkdir(exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path), check_same_thread=False)  # Flet runs handlers in threads
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)

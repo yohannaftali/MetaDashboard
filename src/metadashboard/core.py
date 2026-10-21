@@ -16,6 +16,7 @@ logging in switches the account of that terminal, so never point it at a termina
 import argparse
 import datetime as dt
 import json
+import os
 import random
 import re
 import sys
@@ -25,7 +26,10 @@ from pathlib import Path
 from .store import Store
 from .terminal import Terminal
 
-ROOT = Path(__file__).resolve().parents[2]  # the project folder (src/metadashboard/core.py)
+SRC = Path(__file__).resolve().parents[2]  # the project folder when run from a checkout (src/metadashboard/core.py)
+# a checkout keeps data/ and output/ next to the code; an installed copy (install.ps1) in %LOCALAPPDATA%\MetaDashboard
+ROOT = Path(os.environ.get('METADASHBOARD_HOME') or (SRC if (SRC / 'pyproject.toml').exists() else
+            Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'MetaDashboard'))
 OUT = ROOT / 'output'
 CACHE = ROOT / 'data'
 DB = CACHE / 'metadashboard.db'
@@ -171,7 +175,7 @@ def fetch_all(store, log=print):
     if not terminal or not Path(terminal).exists():
         raise RuntimeError('Set the MT5 terminal path (a terminal64.exe used only for monitoring) in Settings.')
     accounts = []
-    CACHE.mkdir(exist_ok=True)
+    CACHE.mkdir(parents=True, exist_ok=True)
     with Terminal(terminal, log) as term:
         for acc in store.accounts(with_password=True, enabled_only=True):
             cache = cache_file(acc)
@@ -196,7 +200,7 @@ def render(accounts):
 
 
 def build(accounts, path):
-    path.parent.mkdir(exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(accounts), encoding='utf-8')
     return path
 
