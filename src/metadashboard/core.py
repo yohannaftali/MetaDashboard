@@ -137,9 +137,10 @@ def fetch_mt5(acc, terminal, on_login=None):
 def demo_accounts(accounts=()):
     """Random history for the stored accounts (or two default ones when there are none)."""
     rnd = random.Random(7)
-    specs = [(a['name'], a['login'], a['server']) for a in accounts] or [('Vantage', 0, 'demo'), ('Exness', 0, 'demo')]
+    specs = ([(a['name'], a['login'], a['server'], a.get('start_date', '')) for a in accounts]
+             or [('Vantage', 0, 'demo', ''), ('Exness', 0, 'demo', '')])
     out = []
-    for i, (name, login, server) in enumerate(specs):
+    for i, (name, login, server, count_from) in enumerate(specs):
         start, cur, risk = ((10000, 'USC', 1.0), (500, 'USD', 1.6))[i % 2]
         deals, t = [dict(time=dt.datetime(2025, 1, 2, 9), kind='balance', amount=start)], dt.date(2025, 1, 2)
         bal = start
@@ -149,13 +150,21 @@ def demo_accounts(accounts=()):
                 deals.append(dict(time=dt.datetime.combine(t, dt.time(12, 30)), kind='trade', amount=pl, closes=rnd.randint(1, 3)))
                 bal += pl
             t += dt.timedelta(days=1)
-        out.append(dict(name=name + ' (demo)', login=login, server=server, currency=cur, balance=round(bal, 2),
-                        equity=round(bal, 2), days=daily_rows(deals)))
+        out.append(from_start(dict(name=name + ' (demo)', login=login, server=server, currency=cur, balance=round(bal, 2),
+                        equity=round(bal, 2), days=daily_rows(deals)), count_from))
     return out
 
 
 def cache_file(acc):
     return CACHE / ('%d_%s.json' % (acc['login'], re.sub(r'[^A-Za-z0-9.-]+', '_', acc['server'])))
+
+
+def from_start(res, start):
+    """Only the days from the account's start date (Settings): earlier history, e.g. another strategy on an old
+    account, counts nowhere. The cache keeps the whole history, so the date can be changed later."""
+    if start:
+        res = dict(res, days={d: v for d, v in res['days'].items() if d >= start}, start_date=start)
+    return res
 
 
 def load_cached(store, stale=()):
@@ -168,7 +177,7 @@ def load_cached(store, stale=()):
             res['name'] = acc['name']
             if (acc['login'], acc['server']) in stale:
                 res['stale'] = True
-            out.append(res)
+            out.append(from_start(res, acc['start_date']))
     return out
 
 
@@ -193,7 +202,7 @@ def fetch_all(store, log=print):
                     continue
                 res = json.loads(cache.read_text(encoding='utf-8'))
                 res['stale'] = True
-            accounts.append(res)
+            accounts.append(from_start(res, acc['start_date']))
     return accounts
 
 
