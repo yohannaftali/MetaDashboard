@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import calendar
 import datetime as dt
+import math
 import subprocess
 import sys
 import threading
@@ -35,6 +36,12 @@ LIGHT = dict(bg='#f6f7f9', panel='#ffffff', text='#1d2330', muted='#6b7280', lin
 DARK = dict(bg='#0f1218', panel='#171b23', text='#e6e8ec', muted='#8b93a1', line='#262c37', pos='#22c55e',
             neg='#f85149', accent='#60a5fa', weekend='#1b2029')
 NARROW = 720
+# one colour per account in the Compare view, in account order (never by rank): the dataviz reference categorical
+# palette, validated for colour-blind readers on LIGHT / DARK panel (light: relief = the table under the charts)
+SERIES_LIGHT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
+SERIES_DARK = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
+CHART_H = 240
+AXIS_W = 52
 MIN_AUTO_REFRESH = 5  # minutes; a fetch logs in to every account in turn
 
 
@@ -80,6 +87,13 @@ def period(days, frm, to):
 
 def day_pct(v):
     return v['pl'] / v['start'] * 100 if v and v['start'] > 0 else None
+
+
+def nice_step(span, ticks=4):
+    """Grid step for an axis covering span: 1, 2, 2.5 or 5 x a power of ten, about `ticks` steps."""
+    raw = span / ticks
+    mag = 10 ** math.floor(math.log10(raw))
+    return next(m * mag for m in (1, 2, 2.5, 5, 10) if raw <= m * mag)
 
 
 def iso(y, m, d):
@@ -152,7 +166,13 @@ class App:
         self.C = DARK if self.dark else LIGHT
         self.page.theme_mode = ft.ThemeMode.DARK if self.dark else ft.ThemeMode.LIGHT
         self.page.bgcolor = self.C['bg']
-        body = ft.Column([self.cards(), self.calendar(), self.note()] if self.accounts else [self.empty()],
+        if not self.accounts:
+            parts = [self.empty()]
+        elif self.view == 'compare':
+            parts = [self.compare(), self.note()]
+        else:
+            parts = [self.cards(), self.calendar(), self.note()]
+        body = ft.Column(parts,
                          spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)
         self.page.controls.clear()
         self.page.controls.extend([self.header(), ft.Container(body, padding=16, expand=True)])
@@ -176,9 +196,10 @@ class App:
                 names[str(i)] = '%s%s (%s)' % (a['name'], ' · %s' % a['login'] if a['login'] else '', a['currency'])
             items += [
                 ft.Dropdown(value=self.acc, options=[ft.DropdownOption(key=k, text=names[k]) for k in self.keys()],
-                            on_select=self.on_account, dense=True, width=300),
+                            on_select=self.on_account, dense=True, width=300, visible=self.view != 'compare'),
                 ft.SegmentedButton(segments=[ft.Segment('year', label=ft.Text('Year')),
-                                             ft.Segment('month', label=ft.Text('Month'))],
+                                             ft.Segment('month', label=ft.Text('Month')),
+                                             ft.Segment('compare', label=ft.Text('Compare'))],
                                    selected=[self.view], show_selected_icon=False, on_change=self.on_view),
                 ft.Row([ft.IconButton(ft.Icons.CHEVRON_LEFT, tooltip='Previous', on_click=lambda e: self.step(-1)),
                         self.text(str(self.y) if self.view == 'year' else '%s %d' % (MONTHS[self.m], self.y),
@@ -327,6 +348,111 @@ class App:
             if start + dt.timedelta(days=w * 7) > last:
                 break
         return ft.Column(rows, spacing=3 if self.narrow else 6)
+
+    # ------------------------------------------------------------------ compare
+    def series_color(self, i):
+        pal = SERIES_DARK if self.dark else SERIES_LIGHT
+        return pal[i] if i < len(pal) else self.C['muted']  # past 8 accounts: no new hues, the table tells them apart
+
+    def compare(self):
+        """Daily % (the month) and monthly % (the year) of every account side by side, plus a table."""
+        accs, frm, to = self.accounts, iso(self.y, self.m, 1), iso(self.y, self.m, 31)
+        traded = sorted({d for a in accs for d, v in a['days'].items()
+                         if frm <= d <= to and (v['trades'] or v['pl'])})
+        daily = []
+        for d in traded:
+            bars = []
+            for a in accs:
+                v = a['days'].get(d)
+                p = day_pct(v) if v and (v['trades'] or v['pl']) else None
+                bars.append((p, '%s · %s: %s (%s)' % (a['name'], d, fmt_pct(p), fmt_amt(v['pl'], a['currency']))
+                             if p is not None else None))
+            daily.append((str(int(d[8:])), bars))
+        monthly = []
+        for m in range(12):
+            bars = []
+            for a in accs:
+                P = period(a['days'], iso(self.y, m, 1), iso(self.y, m, 31))
+                p = P['pct'] if P['up'] or P['down'] else None
+                bars.append((p, '%s · %s %d: %s (%s)' % (a['name'], MONTHS[m], self.y, fmt_pct(p),
+                                                          fmt_amt(P['pl'], a['currency'])) if p is not None else None))
+            monthly.append((MONTHS[m][:3], bars))
+        parts = [self.legend()] if len(accs) > 1 else []
+        parts += [self.bar_chart('Daily profit %% · %s %d' % (MONTHS[self.m], self.y), daily),
+                  self.bar_chart('Monthly profit %% · %d' % self.y, monthly),
+                  self.compare_table()]
+        return ft.Column(parts, spacing=16)
+
+    def legend(self):
+        return ft.Row([ft.Row([ft.Container(width=12, height=12, border_radius=3, bgcolor=self.series_color(i)),
+                               self.text(a['name'], 13)], spacing=6, tight=True)
+                       for i, a in enumerate(self.accounts)], spacing=18, wrap=True)
+
+    def bar_chart(self, title, groups):
+        """groups: [(label, [(pct or None, tooltip) per account])]: one bar per account from the zero line."""
+        C = self.C
+        head = self.text(title, weight=ft.FontWeight.W_600)
+        vals = [p for _, bars in groups for p, _ in bars if p is not None]
+        if not vals:
+            return self.box(ft.Column([head, self.text('No trades in this period.', 12, C['muted'])]))
+        hi, lo = max(0.0, max(vals)), max(0.0, -min(vals))
+        step = nice_step(max(hi + lo, 0.01))
+        top, bottom = math.ceil(hi / step - 1e-9) * step, math.ceil(lo / step - 1e-9) * step
+        top = top or (0 if bottom else step)
+        scale = CHART_H / (top + bottom)
+        zero = top * scale
+        ticks = [k * step for k in range(-round(bottom / step), round(top / step) + 1)]
+        grid = [ft.Container(left=0, right=0, top=min(CHART_H - 1, zero - t * scale), height=1,
+                             bgcolor=C['muted'] if abs(t) < 1e-9 else C['line']) for t in ticks]
+        axis = [ft.Text(('%+g%%' % round(t, 4)) if abs(t) > 1e-9 else '0%', size=11, color=C['muted'],
+                        left=0, width=AXIS_W - 8, text_align=ft.TextAlign.RIGHT,
+                        top=min(CHART_H - 14, max(0, zero - t * scale - 8))) for t in ticks]
+        cols = []
+        for label, bars in groups:
+            row = []
+            for i, (p, tip) in enumerate(bars):
+                if p is None:
+                    row.append(ft.Container(expand=1))
+                    continue
+                h = max(1.0, abs(p) * scale)
+                radius = (ft.BorderRadius.only(top_left=4, top_right=4) if p >= 0
+                          else ft.BorderRadius.only(bottom_left=4, bottom_right=4))
+                bar = ft.Container(height=h, bgcolor=self.series_color(i), border_radius=radius)
+                # the whole column is the hover target, bigger than a thin bar
+                row.append(ft.Container(ft.Column([ft.Container(height=zero - h if p >= 0 else zero), bar],
+                                                  spacing=0), expand=1, height=CHART_H, tooltip=tip))
+            cols.append(ft.Container(ft.Row(row, spacing=2), expand=1, padding=ft.Padding.symmetric(horizontal=3)))
+        plot = ft.Stack(grid + [ft.Row(cols, spacing=0, left=0, right=0, top=0, bottom=0)], height=CHART_H, expand=True)
+        labels = ft.Row([ft.Container(self.text(label, 11, C['muted']), expand=1, alignment=ft.Alignment.CENTER)
+                         for label, _ in groups], spacing=0, expand=True)
+        return self.box(ft.Column([
+            head,
+            ft.Row([ft.Stack(axis, width=AXIS_W, height=CHART_H), plot], spacing=0),
+            ft.Row([ft.Container(width=AXIS_W), labels], spacing=0),
+        ], spacing=10), padding=ft.Padding.only(left=8, right=16, top=12, bottom=12))
+
+    def compare_table(self):
+        """The same numbers as a table: identity and values without relying on colour."""
+        C, mfrm, mto = self.C, iso(self.y, self.m, 1), iso(self.y, self.m, 31)
+        cols = [('Account', 4), ('%s %%' % MONTHS[self.m][:3], 2), ('%s P/L' % MONTHS[self.m][:3], 3),
+                ('%d %%' % self.y, 2), ('Win / loss days', 2), ('Best day', 2), ('Worst day', 2)]
+        rows = [ft.Row([self.text(t, 12, C['muted'], expand=w) for t, w in cols])]
+        for i, a in enumerate(self.accounts):
+            M, Y = period(a['days'], mfrm, mto), period(a['days'], iso(self.y, 0, 1), iso(self.y, 11, 31))
+            pcts = [day_pct(v) for d, v in a['days'].items() if mfrm <= d <= mto and v['pl']]
+            pcts = [p for p in pcts if p is not None]
+            best, worst = (max(pcts), min(pcts)) if pcts else (None, None)
+            cells = [fmt_pct(M['pct']) or '-', fmt_amt(M['pl'], a['currency']) if M['up'] or M['down'] else '-',
+                     fmt_pct(Y['pct']) or '-', '%d / %d' % (M['up'], M['down']),
+                     fmt_pct(best) or '-', fmt_pct(worst) or '-']
+            signs = [M['pl'], M['pl'], Y['pl'], 0, best or 0, worst or 0]
+            rows.append(ft.Container(ft.Row(
+                [ft.Row([ft.Container(width=12, height=12, border_radius=3, bgcolor=self.series_color(i)),
+                         self.text(a['name'], 13, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS, expand=True)],
+                        spacing=8, expand=cols[0][1])]
+                + [self.text(v, 13, self.sign_color(s), expand=w) for v, s, (_, w) in zip(cells, signs, cols[1:])]),
+                border=ft.Border.only(top=ft.BorderSide(1, C['line'])), padding=ft.Padding.symmetric(vertical=8)))
+        return self.box(ft.Column(rows, spacing=0))
 
     def note(self):
         stale = [a['name'] for a in self.accounts if a.get('stale')]
