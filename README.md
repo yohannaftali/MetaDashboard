@@ -55,7 +55,8 @@ In the HTML page, open `#year` to start in the year view.
 - **All accounts**: amounts are added up, cent accounts (USC, EUC) converted to their dollar / euro (÷ 100). A week / month / year % is taken on the sum of every account's own balance at its first trading day in that period (a day's % on the accounts that traded that day).
 - **Count from** (Settings → Edit account, optional): only the history from that date counts, everywhere (Calendar, Chart, totals, the HTML page). Use it for an old account that traded another strategy before; the full history stays cached, so the date can be changed or cleared later.
 - **History download.** Right after the first login to an account, MT5 still downloads its history; a fetch waits until the deal count stays the same (up to 45 s), and an account with a balance but no deals yet is marked stale instead of being saved empty.
-- Open positions (floating P/L) are not in the calendar; the cards show the current balance and equity.
+- **Max equity DD** (risk): the equity is rebuilt like MT5's own report: every minute a position is open, the positions of a symbol are valued at the worse of that minute's M1 low and high and added to the balance. The drawdown is the deepest fall below the equity's high in the period; deposits and withdrawals do not count. All accounts: the deepest single account. An approximation (per minute, profit linear in the price).
+- Open positions (floating P/L) are not in the calendar's P/L; the cards show the current balance and equity.
 
 `output/` and `data/` contain balances, account numbers and the encrypted passwords and are not committed (`.gitignore`).
 
