@@ -28,10 +28,28 @@ From a clone instead: install uv, then `uv run metadashboard` in the folder. The
 ## Setup
 
 1. Install (above).
-2. **A terminal for monitoring only.** The `MetaTrader5` package logs in by switching the account of the terminal it uses, so it must not be the terminal that runs your EAs.
-   - Copy the folder `C:\Program Files\MetaTrader 5` to e.g. `C:\MT5-Monitor`.
-   - Start `C:\MT5-Monitor\terminal64.exe /portable` once, and add each broker through *File → Open an Account* (type the broker name), so the terminal knows the servers (`Vantage...`, `Exness...`). Close it.
+2. Set up a **terminal for monitoring only** (below).
 3. Start **MetaDashboard** from the Start menu (or `metadashboard`; `uv run metadashboard` in a clone). In **Settings** enter the monitoring terminal path (e.g. `C:\MT5-Monitor\terminal64.exe`) and add each account (name, login, server, investor password), then press **Refresh**.
+
+### The monitoring terminal
+
+MetaDashboard logs in to your accounts one after another through an MT5 terminal, and each login switches that terminal's account. So it needs **its own copy of MetaTrader 5**, never the terminal that runs your EAs or that you trade with. One copy serves all your accounts, also from different brokers.
+
+1. **Copy MetaTrader 5 to its own folder.** In PowerShell:
+
+   ```powershell
+   robocopy "C:\Program Files\MetaTrader 5" "C:\MT5-Monitor" /E
+   ```
+
+   Or in File Explorer: copy the folder `C:\Program Files\MetaTrader 5` and paste it as `C:\MT5-Monitor`. If your MT5 came from a broker, its folder may have another name, e.g. `C:\Program Files\Vantage International MetaTrader 5`; copy that one. Any MT5 copy works for every broker.
+2. **Start the copy once in portable mode**, so it keeps its data in its own folder and not in the one of your trading terminal:
+
+   ```powershell
+   & "C:\MT5-Monitor\terminal64.exe" /portable
+   ```
+3. **Add each broker's server.** In that terminal: *File → Open an Account*, type the broker name (e.g. `Vantage`, `Exness`), pick the server of your account (e.g. `VantageInternational-Live 3`) and log in once with the account's **investor password**. Repeat for every broker. You don't need to keep these logins: MetaDashboard logs in itself.
+4. **Close the terminal.** MetaDashboard starts it minimized for each fetch and closes it afterwards.
+5. In MetaDashboard → **Settings**, enter `C:\MT5-Monitor\terminal64.exe` as the terminal path and press **Save**.
 
 The settings live in `data/metadashboard.db` (SQLite; installed: `%LOCALAPPDATA%\MetaDashboard\data`). Investor passwords are encrypted with Windows DPAPI (readable only by your Windows user on this PC) and are never shown again. An existing `.env` (see `.env.example`) is imported once into an empty database; delete `.env` afterwards.
 
