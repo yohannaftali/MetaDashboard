@@ -136,6 +136,25 @@ def wait_history(mt5, balance, timeout=45):
         time.sleep(1)
 
 
+def logged_in(mt5, acc, password, timeout=30):
+    """account_info() once the terminal is really on this account. A terminal that has just started may still be on
+    (or reconnect to) the account it used last, while initialize() reports success: never read that one's history
+    as this account's."""
+    end = time.monotonic() + timeout
+    tried = False
+    while True:
+        info = mt5.account_info()
+        if info and info.login == acc['login'] and info.server == acc['server']:
+            return info
+        if time.monotonic() > end:
+            raise RuntimeError('the terminal stayed on account %s (%s), not %s (%s)'
+                               % (info.login if info else '?', info.server if info else '?', acc['login'], acc['server']))
+        if not tried or time.monotonic() > end - timeout / 2:
+            mt5.login(acc['login'], server=acc['server'], timeout=60000, **password)
+            tried = True
+        time.sleep(1)
+
+
 def fetch_mt5(acc, terminal, on_login=None, log=print):
     import MetaTrader5 as mt5
     # without a password the terminal uses the one saved at its last login to this account
@@ -148,7 +167,7 @@ def fetch_mt5(acc, terminal, on_login=None, log=print):
     try:
         if on_login:
             on_login()
-        info = mt5.account_info()
+        info = logged_in(mt5, acc, password)
         raw = wait_history(mt5, info.balance)
         deals = []
         for d in raw:
