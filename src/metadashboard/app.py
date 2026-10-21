@@ -60,6 +60,10 @@ def combined_days(accounts, key):
             o['start'] += v['start'] * r
             o['deposit'] += v['deposit'] * r
             o['trades'] += v['trades']
+            for hh, h in (v.get('hours') or {}).items():
+                oh = o.setdefault('hours', {}).setdefault(hh, dict(pl=0.0, trades=0))
+                oh['pl'] += h['pl'] * r
+                oh['trades'] += h['trades']
     return out
 
 
@@ -306,9 +310,11 @@ class App:
 
     def calendar(self):
         D = combined_days(self.accounts, self.acc)
-        frm, to = self.bounds('year' if self.mode == 'year' else 'month')  # Day: its month, the day highlighted
-        cap = max([1] + [abs(day_pct(v) or 0) for d, v in D.items() if frm <= d <= to])
         cur = currency(self.accounts, self.acc)
+        if self.mode == 'day':
+            return self.day_view(D, cur)
+        frm, to = self.bounds()
+        cap = max([1] + [abs(day_pct(v) or 0) for d, v in D.items() if frm <= d <= to])
         return self.year_view(D, cap, cur) if self.mode == 'year' else self.month_view(D, cap, cur)
 
     def year_view(self, D, cap, cur):
@@ -338,6 +344,53 @@ class App:
             months.append(self.box(ft.Column([title] + grid, spacing=3), col={'xs': 12, 'sm': 6, 'md': 4, 'xl': 3},
                                    on_click=lambda e, m=m: self.open_month(m), ink=False))
         return ft.ResponsiveRow(months, spacing=12, run_spacing=12)
+
+    def day_view(self, D, cur):
+        """The picked day hour by hour, 00:00 to 23:00 server time, like an agenda: each hour's P/L, its % of the
+        day's start balance (so the hours add up to the day's %) and closed trades; for all accounts, who made it."""
+        C, k = self.C, self.date().isoformat()
+        v = D.get(k)
+        hours, start = (v or {}).get('hours') or {}, (v or {}).get('start', 0)
+        pct = lambda h: h['pl'] / start * 100 if start > 0 else None
+        cap = max([0.01] + [abs(pct(h) or 0) for h in hours.values()])
+        per_account = {}  # hour -> ['One Piece +8.08 USD', ...] for All accounts
+        if self.acc == 'all':
+            for a in self.accounts:
+                for hh, h in ((a['days'].get(k) or {}).get('hours') or {}).items():
+                    per_account.setdefault(hh, []).append('%s %s' % (a['name'], fmt_amt(h['pl'], a['currency'])))
+        head = self.text('%s · server time' % self.date().strftime('%A %d %B %Y'), weight=ft.FontWeight.W_600)
+        if not v or not (v['trades'] or v['pl']):
+            return ft.Column([head, self.box(self.text('No trades on this day.', 12, C['muted']), padding=16)], spacing=10)
+        if not hours:
+            return ft.Column([head, self.box(self.text('The hourly detail comes with the next Refresh (data fetched by '
+                                                       'an older version has the day totals only).', 12, C['muted']),
+                                             padding=16)], spacing=10)
+        rows = []
+        for hr in range(24):
+            hh = '%02d' % hr
+            h = hours.get(hh)
+            p = pct(h) if h else None
+            bg, white = self.shade(p, cap) if h else (None, False)
+            fg = '#ffffff' if white else None
+            sub = fg or C['muted']
+            line = []
+            if h:
+                line = [self.text(fmt_pct(p), 16, fg, ft.FontWeight.W_600, width=96),
+                        self.text(fmt_amt(h['pl'], cur), 13, sub, width=150),
+                        self.text('%d trade%s' % (h['trades'], 's' if h['trades'] != 1 else '') if h['trades'] else '',
+                                  13, sub, width=90),
+                        self.text(' · '.join(per_account.get(hh, [])), 12, sub, expand=True, no_wrap=True,
+                                  overflow=ft.TextOverflow.ELLIPSIS)]
+            rows.append(ft.Row([
+                self.text('%s:00' % hh, 12, C['muted'], width=52, text_align=ft.TextAlign.RIGHT),
+                ft.Container(ft.Row(line, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                             expand=True, height=38 if h else 26, border_radius=8,
+                             padding=ft.Padding.symmetric(horizontal=12),
+                             bgcolor=bg or (C['panel'] if h else None),
+                             border=ft.Border.all(1, C['line']) if h else ft.Border.only(top=ft.BorderSide(1, C['line'])),
+                             tooltip='\n'.join(per_account.get(hh, [])) or None),
+            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        return ft.Column([head] + rows, spacing=4)
 
     def month_view(self, D, cap, cur):
         C, today = self.C, dt.date.today().isoformat()

@@ -82,9 +82,10 @@ def server_time(ts):
 
 def daily_rows(deals):
     """deals: list of dict(time=datetime (server), kind='trade'|'balance', amount=float)
-    Returns {date: dict(pl, deposit, start, trades)}: start = the balance when the day's first trade closes or
-    opens (so a deposit made earlier that day counts, one made later does not); on a day without trades the
-    balance at the end of the day's deposits / withdrawals."""
+    Returns {date: dict(pl, deposit, start, trades, hours)}: start = the balance when the day's first trade closes
+    or opens (so a deposit made earlier that day counts, one made later does not); on a day without trades the
+    balance at the end of the day's deposits / withdrawals. hours: {'HH': dict(pl, trades)} of the day's trades by
+    server hour (the Calendar's Day view)."""
     deals = sorted(deals, key=lambda d: d['time'])
     days, balance = {}, 0.0
     for d in deals:
@@ -97,6 +98,9 @@ def daily_rows(deals):
                 row['start'] = balance
             row['pl'] += d['amount']
             row['trades'] += d.get('closes', 0)
+            hour = row.setdefault('hours', {}).setdefault(d['time'].strftime('%H'), dict(pl=0.0, trades=0))
+            hour['pl'] += d['amount']
+            hour['trades'] += d.get('closes', 0)
         balance += d['amount']
         if d['kind'] == 'balance' and row['trades'] == 0 and row['pl'] == 0:
             row['_end'] = balance
@@ -104,6 +108,9 @@ def daily_rows(deals):
         end = row.pop('_end', 0.0)
         if row['start'] is None:
             row['start'] = end
+    for row in days.values():
+        for hour in row.get('hours', {}).values():
+            hour['pl'] = round(hour['pl'], 2)
     return {k: {kk: round(vv, 2) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in days.items()}
 
 
@@ -168,9 +175,11 @@ def demo_accounts(accounts=()):
         bal = start
         while t <= dt.date.today():
             if t.weekday() < 5 and rnd.random() < 0.8:
-                pl = bal * rnd.gauss(0.18, 1.0) / 100 * risk
-                deals.append(dict(time=dt.datetime.combine(t, dt.time(12, 30)), kind='trade', amount=pl, closes=rnd.randint(1, 3)))
-                bal += pl
+                for _ in range(rnd.randint(1, 4)):  # a few trades at random hours of the day
+                    pl = bal * rnd.gauss(0.06, 0.5) / 100 * risk
+                    at = dt.time(rnd.randint(1, 22), rnd.randint(0, 59))
+                    deals.append(dict(time=dt.datetime.combine(t, at), kind='trade', amount=pl, closes=rnd.randint(1, 2)))
+                    bal += pl
             t += dt.timedelta(days=1)
         out.append(from_start(dict(name=name + ' (demo)', login=login, server=server, currency=cur, balance=round(bal, 2),
                         equity=round(bal, 2), days=daily_rows(deals)), count_from))
