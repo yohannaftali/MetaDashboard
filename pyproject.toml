@@ -1,0 +1,23 @@
+[project]
+name = "metadashboard"
+version = "0.2.0"
+description = "MetaDashboard: profit calendar for several MT5 accounts"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  # Same Flet as flet/senar and tools/release_manager. The desktop extra brings the native window client.
+  "flet[desktop]==0.86.4",
+  # Windows only; investor (read-only) logins through a terminal used only for monitoring.
+  "MetaTrader5>=5.0.45; sys_platform == 'win32'",
+]
+
+[project.scripts]
+metadashboard = "metadashboard.app:main"
+metadashboard-fetch = "metadashboard.core:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/metadashboard"]
