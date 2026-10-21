@@ -3,6 +3,7 @@
     uv run metadashboard           # the app: shows the data last fetched, Refresh fetches every account
     uv run metadashboard --demo    # random demo data, no MT5 needed
     uv run metadashboard --web     # open it in the browser instead of a window
+    metadashboard --install-shortcuts   # Start menu + desktop shortcuts (--remove-shortcuts before uninstalling)
 
 Same numbers as the HTML page written by core.py: daily % = trading P/L / balance at the day's first trade,
 month / year / week % = P/L / balance at the start of the period's first trading day.
@@ -18,7 +19,8 @@ from pathlib import Path
 
 import flet as ft
 
-from .core import CACHE, DB, demo_accounts, fetch_all, load_cached, open_store
+from . import shortcuts
+from .core import CACHE, DB, ROOT, demo_accounts, fetch_all, load_cached, open_store
 
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
           'November', 'December']
@@ -551,7 +553,13 @@ def main():
     ap.add_argument('--demo', action='store_true', help='random demo data, no MT5 needed')
     ap.add_argument('--db', default=str(DB), help='SQLite database (default data/metadashboard.db)')
     ap.add_argument('--web', action='store_true', help='open in the browser instead of a window')
+    ap.add_argument('--install-shortcuts', action='store_true', help='add Start menu and desktop shortcuts, then exit')
+    ap.add_argument('--remove-shortcuts', action='store_true', help='remove those shortcuts, then exit')
     a = ap.parse_args()
+    if a.install_shortcuts:
+        return shortcuts.install(ROOT)
+    if a.remove_shortcuts:
+        return shortcuts.remove()
     store = open_store(Path(a.db))
 
     async def _main(page: ft.Page):
