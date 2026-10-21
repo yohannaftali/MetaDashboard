@@ -3,6 +3,8 @@ name = "metadashboard"
 version = "0.2.0"
 description = "MetaDashboard: profit calendar for several MT5 accounts"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
   # Pinned; the desktop extra brings the native window client.
