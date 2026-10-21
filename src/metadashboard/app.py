@@ -461,7 +461,9 @@ class App:
             'happens; deposits and withdrawals are not profit. Month / year %% = P/L / balance at the start of the '
             'period. Server dates.' % self.loaded
             + (' All accounts: cent accounts converted to their dollar.' if self.acc == 'all' and len(self.accounts) > 1 else '')
-            + (' Auto refresh every %d min.' % self.minutes() if self.minutes() else ''))]
+            + (' Auto refresh every %d min.' % self.minutes() if self.minutes() else '')
+            + ''.join(' %s counts from %s.' % (a['name'], a['start_date']) for a in self.accounts
+                      if a.get('start_date')))]
         if stale:
             spans.append(ft.TextSpan(' Last fetch failed, older data shown: %s.' % ', '.join(stale),
                                      ft.TextStyle(color=self.C['neg'])))
@@ -554,6 +556,8 @@ class Settings:
         self.server = ft.TextField(label='Server', hint_text='VantageInternational-Live 3', dense=True, expand=True)
         self.password = ft.TextField(label='Investor password (optional)', password=True, can_reveal_password=True,
                                      dense=True, expand=True)
+        self.start = ft.TextField(label='Count from (YYYY-MM-DD, optional)', hint_text='2026-09-01', dense=True,
+                                  width=260)
         self.enabled = ft.Checkbox(label='Include in the dashboard', value=True)
         self.form_title = ft.Text('Add account', size=12, weight=ft.FontWeight.W_600)
         self.cancel = ft.TextButton('Cancel', visible=False, on_click=lambda e: self.reset())
@@ -582,7 +586,10 @@ class Settings:
                     'terminal are added by themselves.', size=12, color=app.C['muted']),
             ft.Row([self.name, self.login]),
             ft.Row([self.server, self.password]),
-            ft.Row([self.enabled, ft.Container(expand=True), self.cancel, self.save]),
+            ft.Row([self.start, self.enabled, ft.Container(expand=True), self.cancel, self.save]),
+            ft.Text('Count from: only the history from that date counts (calendar, Compare, totals), e.g. for an old '
+                    'account that traded another strategy before. Empty = the whole history.', size=12,
+                    color=app.C['muted']),
             ft.Text('Investor (read-only) password only, and only when it is not saved in the monitoring terminal. It '
                     'is stored encrypted for your Windows user and never shown again; leave it empty when editing to '
                     'keep it.', size=12, color=app.C['muted']),
@@ -697,6 +704,7 @@ class Settings:
         for a in self.store.accounts():
             rows.append(ft.Container(ft.Row([
                 ft.Text(a['name'], expand=3), ft.Text(str(a['login']), expand=2), ft.Text(a['server'], expand=4),
+                ft.Text('from ' + a['start_date'] if a['start_date'] else '', size=12, color=C['muted'], expand=2),
                 ft.TextButton('Edit', on_click=lambda e, a=a: self.edit(a)),
                 ft.TextButton('Delete', on_click=lambda e, a=a: self.ask_delete(a)),
             ]), opacity=1 if a['enabled'] else 0.5, border=ft.Border.only(bottom=ft.BorderSide(1, C['line'])),
@@ -705,7 +713,7 @@ class Settings:
 
     def reset(self):
         self.editing = None
-        for f in (self.name, self.login, self.server, self.password):
+        for f in (self.name, self.login, self.server, self.password, self.start):
             f.value = ''
         self.enabled.value = True
         self.form_title.value = self.save.content = 'Add account'
@@ -715,7 +723,7 @@ class Settings:
     def edit(self, a):
         self.editing = a['id']
         self.name.value, self.login.value, self.server.value = a['name'], str(a['login']), a['server']
-        self.password.value, self.enabled.value = '', a['enabled']
+        self.password.value, self.enabled.value, self.start.value = '', a['enabled'], a['start_date']
         self.form_title.value = 'Edit %s' % a['name']
         self.save.content = 'Save'
         self.cancel.visible = True
@@ -742,13 +750,15 @@ class Settings:
         name = self.name.value
         try:
             self.store.save_account(name, self.login.value or 0, self.server.value, self.password.value,
-                                    bool(self.enabled.value), self.editing)
+                                    bool(self.enabled.value), self.editing, self.start.value)
         except Exception as err:
             msg = 'an account with this login and server already exists' if 'UNIQUE' in str(err) else str(err)
             return self.say(msg, True)
         self.changed = True
         self.show_accounts()
         self.reset()
+        self.app.load()  # a new start date shows at once, without waiting for a fetch
+        self.app.render()
         self.say('%s saved.' % name)
 
     def ask_delete(self, a):

@@ -53,6 +53,7 @@ In the HTML page, open `#year` to start in the year view.
 - **Daily %** = daily P/L / the balance when the day's first trade happens (a deposit made earlier that day counts, one made later does not).
 - **Month / year %** = the period's P/L / the balance at the start of its first trading day. Week totals the same way.
 - **All accounts**: amounts are added up, cent accounts (USC, EUC) converted to their dollar / euro (÷ 100), and the % is taken on the added balances.
+- **Count from** (Settings → Edit account, optional): only the history from that date counts, everywhere (calendar, Compare, totals, the HTML page). Use it for an old account that traded another strategy before; the full history stays cached, so the date can be changed or cleared later.
 - Open positions (floating P/L) are not in the calendar; the cards show the current balance and equity.
 
 `output/` and `data/` contain balances, account numbers and the encrypted passwords and are not committed (`.gitignore`).
