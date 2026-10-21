@@ -1,6 +1,6 @@
 # Meta Dashboard
 
-Profit calendar for several MetaTrader 5 accounts: daily, monthly and yearly profit in **% of the balance**. Two tabs: **Calendar** (Year: 12 small months; Month: a big calendar with the day's %, P/L and closed trades, plus week totals; Day: that month with the day picked, its numbers in the cards) and **Chart** (every account side by side for the day, month or year: one bar each with its %, plus a table). Under the tabs pick **Day / Month / Year**, step with ‹ ›, click the date for a calendar, or press **Today**. Not an EA: a [Flet](https://flet.dev) desktop app reads each account's deal history with its **investor (read-only) password**. A command-line fetch also writes one self-contained page, `output/dashboard.html`.
+Profit calendar for several MetaTrader 5 accounts: daily, monthly and yearly profit in **% of the balance**. Two tabs: **Calendar** (Year: 12 small months; Month: a big calendar with the day's %, P/L and closed trades, plus week totals; Day: the day hour by hour from 00:00 to 23:00 server time, like an agenda, its numbers in the cards) and **Chart** (every account side by side for the day, month or year: one bar each with its %, plus a table). Under the tabs pick **Day / Month / Year**, step with ‹ ›, click the date for a calendar, or press **Today**. Not an EA: a [Flet](https://flet.dev) desktop app reads each account's deal history with its **investor (read-only) password**. A command-line fetch also writes one self-contained page, `output/dashboard.html`.
 
 ## Install (Windows)
 
