@@ -2,17 +2,37 @@
 
 Profit calendar for several MetaTrader 5 accounts: daily, monthly and yearly profit in **% of the balance**, in a year view (12 small months) and a month view (big calendar with the day's %, P/L and closed trades, plus week totals). Not an EA: a [Flet](https://flet.dev) desktop app reads each account's deal history with its **investor (read-only) password**. A command-line fetch also writes one self-contained page, `output/dashboard.html`.
 
+## Install (Windows)
+
+In PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/yohannaftali/MetaDashboard/main/install.ps1 | iex"
+```
+
+The installer ([`install.ps1`](install.ps1)) installs [uv](https://docs.astral.sh/uv/) if it is missing, then MetaDashboard as a uv tool (its own Python and packages, nothing system-wide), and adds a **MetaDashboard** shortcut to the Start menu and the desktop. It also puts `metadashboard` and `metadashboard-fetch` on your `PATH`. Run the same command again to update. Settings and data are kept in `%LOCALAPPDATA%\MetaDashboard`.
+
+To uninstall (keeps `%LOCALAPPDATA%\MetaDashboard`; delete it to remove your accounts and data too):
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/yohannaftali/MetaDashboard/main/install.ps1))) -Uninstall"
+```
+
+From a clone instead: install uv, then `uv run metadashboard` in the folder. The first `uv run` creates `.venv` with Flet 0.86.4 and the `MetaTrader5` package (Windows only); Python 3.11+. A clone keeps `data/` and `output/` in its own folder.
+
 ## Setup
 
-1. Install [uv](https://docs.astral.sh/uv/). The first `uv run` creates `.venv` and installs Flet 0.86.4 (same version as `flet/senar` and `tools/release_manager`) and the `MetaTrader5` package (Windows only); Python 3.11+.
+1. Install (above).
 2. **A terminal for monitoring only.** The `MetaTrader5` package logs in by switching the account of the terminal it uses, so it must not be the terminal that runs your EAs.
    - Copy the folder `C:\Program Files\MetaTrader 5` to e.g. `C:\MT5-Monitor`.
    - Start `C:\MT5-Monitor\terminal64.exe /portable` once, and add each broker through *File → Open an Account* (type the broker name), so the terminal knows the servers (`Vantage...`, `Exness...`). Close it.
-3. Start the app: `uv run metadashboard` (opens a desktop window). In **Settings** enter the monitoring terminal path (e.g. `C:\MT5-Monitor\terminal64.exe`) and add each account (name, login, server, investor password), then press **Refresh**.
+3. Start **MetaDashboard** from the Start menu (or `metadashboard`; `uv run metadashboard` in a clone). In **Settings** enter the monitoring terminal path (e.g. `C:\MT5-Monitor\terminal64.exe`) and add each account (name, login, server, investor password), then press **Refresh**.
 
-The settings live in `data/metadashboard.db` (SQLite). Investor passwords are encrypted with Windows DPAPI (readable only by your Windows user on this PC) and are never shown again. An existing `.env` (see `.env.example`) is imported once into an empty database; delete `.env` afterwards.
+The settings live in `data/metadashboard.db` (SQLite; installed: `%LOCALAPPDATA%\MetaDashboard\data`). Investor passwords are encrypted with Windows DPAPI (readable only by your Windows user on this PC) and are never shown again. An existing `.env` (see `.env.example`) is imported once into an empty database; delete `.env` afterwards.
 
 ## Use
+
+Installed, run these without `uv run` (e.g. `metadashboard --demo`). In a clone:
 
 ```
 uv run metadashboard                     # desktop app: settings, refresh, calendar
@@ -25,7 +45,7 @@ uv run metadashboard-fetch --demo        # demo page, no MT5 needed
 
 In the HTML page, open `#year` to start in the year view.
 
-**Keeping the data current.** Data changes only when a fetch runs. In the app, press **Refresh** or set **Auto refresh** in Settings (every N minutes while the app is open, at least 5, 0 = off). Without the app open, run `uv run --directory <this folder> metadashboard-fetch` from Windows Task Scheduler (e.g. every hour); the app shows that data when it starts and after each Refresh. Use one of the two, not both at the same time: they share the monitoring terminal.
+**Keeping the data current.** Data changes only when a fetch runs. In the app, press **Refresh** or set **Auto refresh** in Settings (every N minutes while the app is open, at least 5, 0 = off). Without the app open, run `metadashboard-fetch` (in a clone: `uv run --directory <this folder> metadashboard-fetch`) from Windows Task Scheduler (e.g. every hour); the app shows that data when it starts and after each Refresh. Use one of the two, not both at the same time: they share the monitoring terminal.
 
 **The terminal during a fetch.** One monitoring terminal serves every account: each is logged in to in turn. For a fetch, the terminal is started minimized (without taking the focus), kept minimized after each login, and closed normally when all accounts are read. If that terminal is already open (started by hand), it is used as it is and left open. If one account cannot be fetched, its last good data (in `data/`) is shown and marked as stale.
 

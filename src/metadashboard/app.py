@@ -11,13 +11,14 @@ import argparse
 import asyncio
 import calendar
 import datetime as dt
+import sys
 import threading
 import time
 from pathlib import Path
 
 import flet as ft
 
-from .core import DB, demo_accounts, fetch_all, load_cached, open_store
+from .core import CACHE, DB, demo_accounts, fetch_all, load_cached, open_store
 
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
           'November', 'December']
@@ -558,6 +559,14 @@ def main():
         App(page, store, a.demo)
 
     ft.run(_main, view=ft.AppView.WEB_BROWSER if a.web else ft.AppView.FLET_APP)
+
+
+def gui():
+    """Start menu / desktop shortcut (no console window): output goes to data/metadashboard.log."""
+    if sys.stdout is None or sys.stderr is None:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        sys.stdout = sys.stderr = open(CACHE / 'metadashboard.log', 'a', encoding='utf-8', buffering=1)
+    main()
 
 
 if __name__ == '__main__':
