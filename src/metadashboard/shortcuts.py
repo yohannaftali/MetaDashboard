@@ -7,6 +7,7 @@ from pathlib import Path
 
 NAME = 'MetaDashboard'
 GUI = 'metadashboard-gui'
+ICON = Path(__file__).resolve().parent / 'assets' / 'icon.ico'  # tools/make_icon.py
 
 # WScript.Shell makes the .lnk; the paths come in through the environment, so nothing needs quoting
 PS_CREATE = r"""
@@ -15,6 +16,7 @@ foreach ($path in $env:MD_LINKS -split ';') {
     $lnk = $shell.CreateShortcut($path)
     $lnk.TargetPath = $env:MD_TARGET
     $lnk.WorkingDirectory = $env:MD_WORKDIR
+    $lnk.IconLocation = "$env:MD_ICON,0"
     $lnk.Description = 'Profit calendar for several MT5 accounts'
     $lnk.Save()
 }
@@ -48,7 +50,8 @@ def install(workdir):
     target = gui_exe()
     workdir.mkdir(parents=True, exist_ok=True)
     paths = links()
-    env = dict(os.environ, MD_LINKS=';'.join(map(str, paths)), MD_TARGET=str(target), MD_WORKDIR=str(workdir))
+    env = dict(os.environ, MD_LINKS=';'.join(map(str, paths)), MD_TARGET=str(target), MD_WORKDIR=str(workdir),
+               MD_ICON=str(ICON))
     subprocess.run(['powershell', '-NoProfile', '-Command', PS_CREATE], env=env, check=True)
     for p in paths:
         print('shortcut', p, '->', target)
