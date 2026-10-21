@@ -9,6 +9,7 @@ import time
 from ctypes import wintypes
 
 SW_SHOWMINNOACTIVE = 7  # minimized, without taking the focus
+SW_RESTORE = 9
 WM_CLOSE = 0x0010
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
@@ -29,14 +30,35 @@ def _image(pid):
         k32.CloseHandle(h)
 
 
-def running(path):
-    """True when a process of this terminal64.exe is running."""
+def _pids(path):
+    """Process ids of this terminal64.exe."""
     pids, needed = (wintypes.DWORD * 4096)(), wintypes.DWORD()
     if not ctypes.windll.psapi.EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(needed)):
-        return False
+        return []
     target = _norm(path)
-    return any(img and _norm(img) == target
-               for img in (_image(pid) for pid in pids[:needed.value // ctypes.sizeof(wintypes.DWORD)] if pid))
+    return [pid for pid in pids[:needed.value // ctypes.sizeof(wintypes.DWORD)]
+            if pid and (_image(pid) or '') and _norm(_image(pid)) == target]
+
+
+def running(path):
+    """True when a process of this terminal64.exe is running."""
+    return bool(_pids(path))
+
+
+def show(path, wait=20):
+    """Bring the terminal's window up, restored and in front, for the user to log in. A portable terminal reopens
+    the way it was closed, which after a fetch (started minimized) is minimized."""
+    end = time.monotonic() + wait
+    while time.monotonic() < end:
+        hwnds = [h for pid in _pids(path) for h in _windows(pid)]
+        if hwnds:
+            time.sleep(1)  # let it finish opening, it may minimize itself again on start
+            for h in [h for pid in _pids(path) for h in _windows(pid)]:
+                ctypes.windll.user32.ShowWindow(h, SW_RESTORE)
+            ctypes.windll.user32.SetForegroundWindow(hwnds[0])
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def _windows(pid):

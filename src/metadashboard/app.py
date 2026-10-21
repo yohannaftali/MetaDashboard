@@ -24,7 +24,7 @@ import flet as ft
 
 from . import monitor, shortcuts
 from .core import CACHE, DB, ROOT, cache_file, demo_accounts, fetch_all, load_cached, open_store
-from .terminal import running
+from .terminal import running, show
 
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
           'November', 'December']
@@ -777,7 +777,8 @@ class Settings:
         self.page.run_thread(self.session_done, path)
 
     def session_done(self, path):
-        time.sleep(5)
+        show(path)  # restored and in front: it reopens minimized after a fetch
+        time.sleep(2)
         while running(path):  # until the user closes the terminal
             time.sleep(2)
         self.app.session = False
