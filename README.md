@@ -1,6 +1,6 @@
-# MetaDashboard
+# Meta Dashboard
 
-Profit calendar for several MetaTrader 5 accounts: daily, monthly and yearly profit in **% of the balance**, in a year view (12 small months) a month view (big calendar with the day's %, P/L and closed trades, plus week totals) and a **Compare** view (every account side by side for one day, one month or one year: one bar each with its %, plus a table). Click the date in the header to pick it from a calendar. Not an EA: a [Flet](https://flet.dev) desktop app reads each account's deal history with its **investor (read-only) password**. A command-line fetch also writes one self-contained page, `output/dashboard.html`.
+Profit calendar for several MetaTrader 5 accounts: daily, monthly and yearly profit in **% of the balance**. Two tabs: **Calendar** (Year: 12 small months; Month: a big calendar with the day's %, P/L and closed trades, plus week totals; Day: that month with the day picked, its numbers in the cards) and **Chart** (every account side by side for the day, month or year: one bar each with its %, plus a table). Under the tabs pick **Day / Month / Year**, step with ‹ ›, click the date for a calendar, or press **Today**. Not an EA: a [Flet](https://flet.dev) desktop app reads each account's deal history with its **investor (read-only) password**. A command-line fetch also writes one self-contained page, `output/dashboard.html`.
 
 ## Install (Windows)
 
@@ -53,7 +53,7 @@ In the HTML page, open `#year` to start in the year view.
 - **Daily %** = daily P/L / the balance when the day's first trade happens (a deposit made earlier that day counts, one made later does not).
 - **Month / year %** = the period's P/L / the balance at the start of its first trading day. Week totals the same way.
 - **All accounts**: amounts are added up, cent accounts (USC, EUC) converted to their dollar / euro (÷ 100), and the % is taken on the added balances.
-- **Count from** (Settings → Edit account, optional): only the history from that date counts, everywhere (calendar, Compare, totals, the HTML page). Use it for an old account that traded another strategy before; the full history stays cached, so the date can be changed or cleared later.
+- **Count from** (Settings → Edit account, optional): only the history from that date counts, everywhere (Calendar, Chart, totals, the HTML page). Use it for an old account that traded another strategy before; the full history stays cached, so the date can be changed or cleared later.
 - **History download.** Right after the first login to an account, MT5 still downloads its history; a fetch waits until the deal count stays the same (up to 45 s), and an account with a balance but no deals yet is marked stale instead of being saved empty.
 - Open positions (floating P/L) are not in the calendar; the cards show the current balance and equity.
 
