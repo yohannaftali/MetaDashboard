@@ -86,6 +86,11 @@ def period(days, frm, to):
     return dict(pl=pl, pct=pl / start * 100 if start else None, up=up, down=down, trades=trades)
 
 
+def first_start(days, frm, to):
+    """An account's balance at its first trading day in the period (0: no trades in it)."""
+    return next((days[d]['start'] for d in sorted(days) if frm <= d <= to and days[d]['start'] > 0), 0)
+
+
 def day_pct(v):
     return v['pl'] / v['start'] * 100 if v and v['start'] > 0 else None
 
@@ -263,7 +268,7 @@ class App:
 
     def cards(self):
         C, D, cur = self.C, combined_days(self.accounts, self.acc), currency(self.accounts, self.acc)
-        P = period(D, *self.bounds())
+        P = self.span(*self.bounds())
         accs = self.accounts if self.acc == 'all' else [self.accounts[int(self.acc)]]
         rate = lambda a: RATE.get(a['currency'], 1) if self.acc == 'all' else 1
         bal = sum(a['balance'] * rate(a) for a in accs)
@@ -279,6 +284,15 @@ class App:
             self.box(ft.Column([self.text(k, 12, C['muted']), self.text(v, 16 if self.narrow else 20, c, ft.FontWeight.W_600)],
                                spacing=2), col={'xs': 6, 'md': 4, 'lg': 2})
             for k, v, c in cards], spacing=12, run_spacing=12)
+
+    def span(self, frm, to):
+        """P/L and % of the selected account(s) over a period. All accounts: the % is on the sum of every account's
+        own balance at its first trading day in the period, not only of the accounts that traded on its first day."""
+        P = period(combined_days(self.accounts, self.acc), frm, to)
+        if self.acc == 'all':
+            start = sum(first_start(a['days'], frm, to) * RATE.get(a['currency'], 1) for a in self.accounts)
+            P['pct'] = P['pl'] / start * 100 if start else None
+        return P
 
     def sign_color(self, v):
         return self.C['pos'] if v > 0 else self.C['neg'] if v < 0 else None
@@ -300,7 +314,7 @@ class App:
     def year_view(self, D, cap, cur):
         C, today, months = self.C, dt.date.today().isoformat(), []
         for m in range(12):
-            M = period(D, iso(self.y, m, 1), iso(self.y, m, 31))
+            M = self.span(iso(self.y, m, 1), iso(self.y, m, 31))
             first, n = calendar.monthrange(self.y, m + 1)
             cells = [ft.Container(expand=True) for _ in range(first)]
             for d in range(1, n + 1):
@@ -338,16 +352,14 @@ class App:
         rows = [ft.Row(head, spacing=6)]
         height, w = 64 if self.narrow else 92, 0
         while True:
-            cells, wpl, wstart = [], 0.0, None
+            cells, week = [], []  # the week's days in this month
             for i in range(7):
                 day = start + dt.timedelta(days=w * 7 + i)
                 k, in_month = day.isoformat(), day.month == self.m + 1
                 v = D.get(k)
                 p = day_pct(v)
-                if v and in_month:
-                    wpl += v['pl']
-                    if wstart is None and v['start'] > 0:
-                        wstart = v['start']
+                if in_month:
+                    week.append(k)
                 bg, white = self.shade(p, cap) if in_month else (None, False)
                 fg = '#ffffff' if white else None
                 sub = fg or C['muted']
@@ -370,9 +382,10 @@ class App:
                     tooltip=tip, on_click=(lambda e, day=day: self.pick_day(day)) if in_month else None))
             if week_col:
                 lines = [self.text('W%d' % (w + 1), 12, C['muted']), ft.Container(expand=True)]
-                if wstart:
-                    lines += [self.text(fmt_pct(wpl / wstart * 100), 18, self.sign_color(wpl), ft.FontWeight.W_600),
-                              self.text(fmt_amt(wpl, cur), 12, C['muted'])]
+                W = self.span(week[0], week[-1]) if week else None
+                if W and W['pct'] is not None:
+                    lines += [self.text(fmt_pct(W['pct']), 18, self.sign_color(W['pl']), ft.FontWeight.W_600),
+                              self.text(fmt_amt(W['pl'], cur), 12, C['muted'])]
                 cells.append(ft.Container(ft.Column(lines, spacing=0), expand=9, height=height, border_radius=10,
                                           padding=ft.Padding.symmetric(vertical=6, horizontal=8),
                                           border=ft.Border.all(1, C['line'])))

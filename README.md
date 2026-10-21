@@ -52,7 +52,7 @@ In the HTML page, open `#year` to start in the year view.
 - **Daily P/L** = profit + swap + commission (+ fees) of the day's buy / sell deals, by **server date**. Deposits, withdrawals, credit and bonuses are not profit.
 - **Daily %** = daily P/L / the balance when the day's first trade happens (a deposit made earlier that day counts, one made later does not).
 - **Month / year %** = the period's P/L / the balance at the start of its first trading day. Week totals the same way.
-- **All accounts**: amounts are added up, cent accounts (USC, EUC) converted to their dollar / euro (÷ 100), and the % is taken on the added balances.
+- **All accounts**: amounts are added up, cent accounts (USC, EUC) converted to their dollar / euro (÷ 100). A week / month / year % is taken on the sum of every account's own balance at its first trading day in that period (a day's % on the accounts that traded that day).
 - **Count from** (Settings → Edit account, optional): only the history from that date counts, everywhere (Calendar, Chart, totals, the HTML page). Use it for an old account that traded another strategy before; the full history stays cached, so the date can be changed or cleared later.
 - **History download.** Right after the first login to an account, MT5 still downloads its history; a fetch waits until the deal count stays the same (up to 45 s), and an account with a balance but no deals yet is marked stale instead of being saved empty.
 - Open positions (floating P/L) are not in the calendar; the cards show the current balance and equity.
