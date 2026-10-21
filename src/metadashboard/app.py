@@ -23,6 +23,7 @@ from pathlib import Path
 import flet as ft
 
 from . import monitor, shortcuts
+from .equity import max_dd
 from .core import CACHE, DB, ROOT, cache_file, demo_accounts, fetch_all, load_cached, open_store
 from .terminal import running, show
 
@@ -284,10 +285,21 @@ class App:
                  (label + ' P/L', fmt_amt(P['pl'], cur), sign), (label + ' %', fmt_pct(P['pct']) or '-', sign),
                  ('Winning / losing days', '%d / %d' % (P['up'], P['down']), None),
                  ('Closed trades', str(P['trades']), None)]
+        dd, who = self.dd(*self.bounds())
+        cards.append(('Max equity DD' + (' · ' + who if self.acc == 'all' and who else ''),
+                      '-%.2f%%' % dd if dd else ('0.00%' if dd == 0 else '-'), C['neg'] if dd else None))
         return ft.ResponsiveRow([
-            self.box(ft.Column([self.text(k, 12, C['muted']), self.text(v, 16 if self.narrow else 20, c, ft.FontWeight.W_600)],
-                               spacing=2), col={'xs': 6, 'md': 4, 'lg': 2})
-            for k, v, c in cards], spacing=12, run_spacing=12)
+            self.box(ft.Column([self.text(k, 12, C['muted'], no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
+                                self.text(v, 16 if self.narrow else 20, c, ft.FontWeight.W_600)],
+                               spacing=2), col={'xs': 14, 'md': 7, 'lg': 4})
+            for k, v, c in cards], columns=28, spacing=12, run_spacing=12)
+
+    def dd(self, frm, to):
+        """(max equity drawdown %, account) of the period: the selected account, or the deepest of all accounts
+        (equities of separate accounts are not added up minute by minute). (None, None): no equity data."""
+        accs = self.accounts if self.acc == 'all' else [self.accounts[int(self.acc)]]
+        found = [(v, a['name']) for a in accs for v in [max_dd(a.get('curve') or {}, frm, to)] if v is not None]
+        return max(found) if found else (None, None)
 
     def span(self, frm, to):
         """P/L and % of the selected account(s) over a period. All accounts: the % is on the sum of every account's
@@ -333,7 +345,8 @@ class App:
                     alignment=ft.Alignment.CENTER,
                     bgcolor=bg or (C['weekend'] if wk else None), border_radius=4,
                     border=ft.Border.all(2, C['accent']) if k == today else None,
-                    tooltip='%s: %s (%s)' % (k, fmt_amt(v['pl'], cur), fmt_pct(p)) if v else k))
+                    tooltip=('%s: %s (%s)' % (k, fmt_amt(v['pl'], cur), fmt_pct(p))
+                             + ('  max equity DD %.2f%%' % self.dd(k, k)[0] if self.dd(k, k)[0] else '')) if v else k))
             cells += [ft.Container(expand=True) for _ in range(-len(cells) % 7)]
             grid = [ft.Row([ft.Container(self.text(h[0], 10, C['muted']), expand=True, alignment=ft.Alignment.CENTER)
                             for h in DOW], spacing=3)]
@@ -358,7 +371,10 @@ class App:
             for a in self.accounts:
                 for hh, h in ((a['days'].get(k) or {}).get('hours') or {}).items():
                     per_account.setdefault(hh, []).append('%s %s' % (a['name'], fmt_amt(h['pl'], a['currency'])))
-        head = self.text('%s · server time' % self.date().strftime('%A %d %B %Y'), weight=ft.FontWeight.W_600)
+        dd, who = self.dd(k, k)
+        head = self.text('%s · server time%s' % (self.date().strftime('%A %d %B %Y'),
+                                                 ' · max equity DD %.2f%%%s' % (dd, ' (%s)' % who if self.acc == 'all' else '')
+                                                 if dd else ''), weight=ft.FontWeight.W_600)
         if not v or not (v['trades'] or v['pl']):
             return ft.Column([head, self.box(self.text('No trades on this day.', 12, C['muted']), padding=16)], spacing=10)
         if not hours:
@@ -421,8 +437,10 @@ class App:
                     lines.append(self.text(fmt_pct(p), 13 if self.narrow else 18, fg, ft.FontWeight.W_600))
                     if not self.narrow:
                         lines.append(self.text(fmt_amt(v['pl'], cur), 12, sub))
-                        lines.append(self.text('%d trade%s' % (v['trades'], 's' if v['trades'] > 1 else '')
-                                               if v['trades'] else '', 12, sub))
+                        dd = self.dd(k, k)[0]
+                        lines.append(self.text(' · '.join(x for x in (
+                            '%d trade%s' % (v['trades'], 's' if v['trades'] > 1 else '') if v['trades'] else '',
+                            'DD %.1f%%' % dd if dd else '') if x), 12, sub))
                 tip = None
                 if v:
                     tip = 'start balance %.2f' % v['start'] + (', deposit/withdrawal %.2f' % v['deposit'] if v['deposit'] else '')
@@ -476,7 +494,15 @@ class App:
             p = P['pct'] if traded else None
             tip = '%s: %s (%s)' % (a['name'], fmt_pct(p), fmt_amt(P['pl'], a['currency'])) if traded else None
             groups.append((a['name'], [(p, tip, self.series_color(i))]))
-        return ft.Column([self.bar_chart(title, groups, values=True), self.compare_table(frm, to)], spacing=16)
+        risk = []
+        for i, a in enumerate(self.accounts):
+            dd = max_dd(a.get('curve') or {}, frm, to)
+            risk.append((a['name'], [(-dd if dd is not None else None,
+                                      '%s: max equity drawdown %.2f%%' % (a['name'], dd) if dd is not None else None,
+                                      self.series_color(i))]))
+        return ft.Column([self.bar_chart(title, groups, values=True),
+                          self.bar_chart('Max equity drawdown %% · %s' % title.split(' · ', 1)[1], risk, values=True),
+                          self.compare_table(frm, to)], spacing=16)
 
     def on_mode(self, e):
         self.mode = e.control.selected[0] if e.control.selected else self.mode
@@ -547,14 +573,16 @@ class App:
     def compare_table(self, frm, to):
         """The same numbers as a table: identity and values without relying on colour."""
         C, day = self.C, self.mode == 'day'
-        cols = [('Account', 4), ('Profit %', 2), ('P/L', 3), ('Closed trades', 2)]
+        cols = [('Account', 4), ('Profit %', 2), ('P/L', 3), ('Max equity DD', 2), ('Closed trades', 2)]
         cols += [('Start balance', 3)] if day else [('Win / loss days', 2), ('Best day', 2), ('Worst day', 2)]
         rows = [ft.Row([self.text(t, 12, C['muted'], expand=w) for t, w in cols])]
         for i, a in enumerate(self.accounts):
             P = period(a['days'], frm, to)
             traded = P['up'] or P['down'] or P['trades']
             cells = [((fmt_pct(P['pct']) if traded else '') or '-', P['pl']),
-                     (fmt_amt(P['pl'], a['currency']) if traded else '-', P['pl']), (str(P['trades']), 0)]
+                     (fmt_amt(P['pl'], a['currency']) if traded else '-', P['pl'])]
+            dd = max_dd(a.get('curve') or {}, frm, to)
+            cells += [('-%.2f%%' % dd if dd else ('-' if dd is None else '0.00%'), -(dd or 0)), (str(P['trades']), 0)]
             if day:
                 v = a['days'].get(frm)
                 cells.append(('{:,.2f} {}'.format(v['start'], a['currency']) if v else '-', 0))
@@ -628,7 +656,8 @@ class App:
         spans = [ft.TextSpan(
             'Loaded %s. Daily %% = trading P/L (profit + swap + commission) / balance when the day\'s first trade '
             'happens; deposits and withdrawals are not profit. Month / year %% = P/L / balance at the start of the '
-            'period. Server dates.' % self.loaded
+            'period. Max equity DD = the deepest fall of the equity (open trades at the worst M1 price of each '
+            'minute) below its high in the period, deposits and withdrawals left out. Server dates.' % self.loaded
             + (' All accounts: cent accounts converted to their dollar.' if self.acc == 'all' and len(self.accounts) > 1 else '')
             + (' Auto refresh every %d min.' % self.minutes() if self.minutes() else '')
             + ''.join(' %s counts from %s.' % (a['name'], a['start_date']) for a in self.accounts

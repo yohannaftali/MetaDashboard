@@ -24,6 +24,7 @@ import time
 import webbrowser
 from pathlib import Path
 
+from .equity import equity_days
 from .store import Store
 from .terminal import Terminal
 
@@ -135,7 +136,7 @@ def wait_history(mt5, balance, timeout=45):
         time.sleep(1)
 
 
-def fetch_mt5(acc, terminal, on_login=None):
+def fetch_mt5(acc, terminal, on_login=None, log=print):
     import MetaTrader5 as mt5
     # without a password the terminal uses the one saved at its last login to this account
     password = dict(password=acc['password']) if acc.get('password') else {}
@@ -157,8 +158,15 @@ def fetch_mt5(acc, terminal, on_login=None):
                 deals.append(dict(time=server_time(d.time), kind='trade', amount=amount, closes=closes))
             else:  # balance, credit, bonus, correction, ... : money moved, not trading
                 deals.append(dict(time=server_time(d.time), kind='balance', amount=amount))
+        try:  # equity drawdown from the M1 bars of the traded symbols; the day totals do not depend on it
+            ticks = [mt5.symbol_info_tick(s) for s in {d.symbol for d in raw if d.symbol}]
+            now = max([d.time for d in raw] + [t.time for t in ticks if t])
+            curve = equity_days(mt5, raw, now, log)
+        except Exception as e:
+            log('%s: equity drawdown not computed: %s' % (acc['name'], e))
+            curve = {}
         return dict(name=acc['name'], login=acc['login'], server=acc['server'], currency=info.currency,
-                    balance=info.balance, equity=info.equity, days=daily_rows(deals))
+                    balance=info.balance, equity=info.equity, days=daily_rows(deals), curve=curve)
     finally:
         mt5.shutdown()
 
@@ -181,8 +189,16 @@ def demo_accounts(accounts=()):
                     deals.append(dict(time=dt.datetime.combine(t, at), kind='trade', amount=pl, closes=rnd.randint(1, 2)))
                     bal += pl
             t += dt.timedelta(days=1)
+        days = daily_rows(deals)
+        curve, index = {}, 1.0  # an equity index per day with a random dip below the day's low, like open trades
+        for d, v in sorted(days.items()):
+            if v['start'] > 0 and (v['trades'] or v['pl']):
+                close = index * (1 + v['pl'] / v['start'])
+                low = min(index, close) * (1 - abs(rnd.gauss(0, 0.8)) / 100 * risk)
+                curve[d] = [round(x, 6) for x in (index, max(index, close), low, close, 1 - low / index)]
+                index = close
         out.append(from_start(dict(name=name + ' (demo)', login=login, server=server, currency=cur, balance=round(bal, 2),
-                        equity=round(bal, 2), days=daily_rows(deals)), count_from))
+                        equity=round(bal, 2), days=days, curve=curve), count_from))
     return out
 
 
@@ -194,7 +210,8 @@ def from_start(res, start):
     """Only the days from the account's start date (Settings): earlier history, e.g. another strategy on an old
     account, counts nowhere. The cache keeps the whole history, so the date can be changed later."""
     if start:
-        res = dict(res, days={d: v for d, v in res['days'].items() if d >= start}, start_date=start)
+        res = dict(res, days={d: v for d, v in res['days'].items() if d >= start}, start_date=start,
+                   curve={d: v for d, v in (res.get('curve') or {}).items() if d >= start})
     return res
 
 
@@ -224,7 +241,7 @@ def fetch_all(store, log=print):
         for acc in store.accounts(with_password=True, enabled_only=True):
             cache = cache_file(acc)
             try:
-                res = fetch_mt5(acc, terminal, term.minimize)
+                res = fetch_mt5(acc, terminal, term.minimize, log)
                 cache.write_text(json.dumps(res), encoding='utf-8')
                 log('%s %s: balance %.2f %s, %d days' % (acc['name'], acc['server'], res['balance'], res['currency'], len(res['days'])))
             except Exception as e:
