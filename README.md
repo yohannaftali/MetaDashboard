@@ -58,3 +58,7 @@ In the HTML page, open `#year` to start in the year view.
 - Open positions (floating P/L) are not in the calendar; the cards show the current balance and equity.
 
 `output/` and `data/` contain balances, account numbers and the encrypted passwords and are not committed (`.gitignore`).
+
+## License
+
+[MIT](LICENSE)
