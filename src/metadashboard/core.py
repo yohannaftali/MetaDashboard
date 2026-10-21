@@ -20,6 +20,7 @@ import os
 import random
 import re
 import sys
+import time
 import webbrowser
 from pathlib import Path
 
@@ -106,6 +107,27 @@ def daily_rows(deals):
     return {k: {kk: round(vv, 2) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in days.items()}
 
 
+def wait_history(mt5, balance, timeout=45):
+    """The account's deals once the terminal has them. Right after the first login to an account the terminal is
+    still downloading its history and answers with none, so read until the count stays the same; an account with a
+    balance has at least its deposit, so an empty history then means "not downloaded yet", never "no deals"."""
+    start, counts = time.monotonic(), []
+    while True:
+        raw = mt5.history_deals_get(dt.datetime(2000, 1, 1), dt.datetime.now() + dt.timedelta(days=2))
+        if raw is None:
+            raise RuntimeError('history not available: %s' % (mt5.last_error(),))
+        counts.append(len(raw))
+        waited = time.monotonic() - start
+        if counts[-3:] == [len(raw)] * 3 and (raw or not balance):  # unchanged for 2 s
+            return raw
+        if waited > timeout:
+            if raw:
+                return raw
+            raise RuntimeError('history still empty after %d s although the balance is %.2f; try again' %
+                               (timeout, balance))
+        time.sleep(1)
+
+
 def fetch_mt5(acc, terminal, on_login=None):
     import MetaTrader5 as mt5
     # without a password the terminal uses the one saved at its last login to this account
@@ -119,7 +141,7 @@ def fetch_mt5(acc, terminal, on_login=None):
         if on_login:
             on_login()
         info = mt5.account_info()
-        raw = mt5.history_deals_get(dt.datetime(2000, 1, 1), dt.datetime.now() + dt.timedelta(days=2)) or []
+        raw = wait_history(mt5, info.balance)
         deals = []
         for d in raw:
             amount = d.profit + d.swap + d.commission + getattr(d, 'fee', 0.0)

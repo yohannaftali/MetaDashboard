@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import calendar
 import datetime as dt
+import json
 import math
 import subprocess
 import sys
@@ -22,7 +23,7 @@ from pathlib import Path
 import flet as ft
 
 from . import monitor, shortcuts
-from .core import CACHE, DB, ROOT, demo_accounts, fetch_all, load_cached, open_store
+from .core import CACHE, DB, ROOT, cache_file, demo_accounts, fetch_all, load_cached, open_store
 from .terminal import running
 
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
@@ -89,6 +90,16 @@ def day_pct(v):
     return v['pl'] / v['start'] * 100 if v and v['start'] > 0 else None
 
 
+def last_deposit(acc):
+    """Date of the account's last deposit in its fetched history, or None."""
+    try:
+        days = json.loads(cache_file(acc).read_text(encoding='utf-8'))['days']
+    except (OSError, ValueError, KeyError):
+        return None
+    deposits = [d for d, v in days.items() if v['deposit'] > 0]
+    return max(deposits) if deposits else None
+
+
 def nice_step(span, ticks=4):
     """Grid step for an axis covering span: 1, 2, 2.5 or 5 x a power of ten, about `ticks` steps."""
     raw = span / ticks
@@ -115,7 +126,9 @@ class App:
         self.lock = threading.Lock()  # one MT5 session at a time
         self.stale = set()
         today = dt.date.today()
-        self.acc, self.view, self.y, self.m = 'all', 'month', today.year, today.month - 1
+        self.acc, self.view, self.y, self.m, self.d = 'all', 'month', today.year, today.month - 1, today.day
+        self.cmode = 'month'  # Compare: 'day', 'month' or 'year'
+        self.suggestions, self.focused, self.blurred = {}, None, (None, 0.0)
         self.dark = page.platform_brightness == ft.Brightness.DARK
         self.narrow = False
         self.busy = False
@@ -126,6 +139,7 @@ class App:
         page.theme = ft.Theme(color_scheme_seed=LIGHT['accent'])
         page.dark_theme = ft.Theme(color_scheme_seed=DARK['accent'])
         page.on_resize = self.on_resize
+        page.on_keyboard_event = self.on_key
         self.last_refresh = time.monotonic()
         self.load()
         self.render()
@@ -202,8 +216,8 @@ class App:
                                              ft.Segment('compare', label=ft.Text('Compare'))],
                                    selected=[self.view], show_selected_icon=False, on_change=self.on_view),
                 ft.Row([ft.IconButton(ft.Icons.CHEVRON_LEFT, tooltip='Previous', on_click=lambda e: self.step(-1)),
-                        self.text(str(self.y) if self.view == 'year' else '%s %d' % (MONTHS[self.m], self.y),
-                                  weight=ft.FontWeight.W_600, width=130, text_align=ft.TextAlign.CENTER),
+                        ft.TextButton(self.period_label(), icon=ft.Icons.CALENDAR_MONTH, on_click=self.pick_date,
+                                      tooltip='Pick a date', style=ft.ButtonStyle(color=C['text'])),
                         ft.IconButton(ft.Icons.CHEVRON_RIGHT, tooltip='Next', on_click=lambda e: self.step(1))],
                        spacing=0, tight=True),
                 ft.OutlinedButton('Today', on_click=self.on_today),
@@ -352,55 +366,67 @@ class App:
     # ------------------------------------------------------------------ compare
     def series_color(self, i):
         pal = SERIES_DARK if self.dark else SERIES_LIGHT
-        return pal[i] if i < len(pal) else self.C['muted']  # past 8 accounts: no new hues, the table tells them apart
+        return pal[i] if i < len(pal) else self.C['muted']  # past 8 accounts: no new hues, the labels tell them apart
+
+    def date(self):
+        """The selected day (its day of month clamped to the selected month)."""
+        return dt.date(self.y, self.m + 1, min(self.d, calendar.monthrange(self.y, self.m + 1)[1]))
+
+    def trading_days(self):
+        return sorted({d for a in self.accounts for d, v in a['days'].items() if v['trades'] or v['pl']})
+
+    def compare_bounds(self):
+        if self.cmode == 'day':
+            return (self.date().isoformat(),) * 2
+        if self.cmode == 'year':
+            return iso(self.y, 0, 1), iso(self.y, 11, 31)
+        return iso(self.y, self.m, 1), iso(self.y, self.m, 31)
 
     def compare(self):
-        """Daily % (the month) and monthly % (the year) of every account side by side, plus a table."""
-        accs, frm, to = self.accounts, iso(self.y, self.m, 1), iso(self.y, self.m, 31)
-        traded = sorted({d for a in accs for d, v in a['days'].items()
-                         if frm <= d <= to and (v['trades'] or v['pl'])})
-        daily = []
-        for d in traded:
-            bars = []
-            for a in accs:
-                v = a['days'].get(d)
-                p = day_pct(v) if v and (v['trades'] or v['pl']) else None
-                bars.append((p, '%s · %s: %s (%s)' % (a['name'], d, fmt_pct(p), fmt_amt(v['pl'], a['currency']))
-                             if p is not None else None))
-            daily.append((str(int(d[8:])), bars))
-        monthly = []
-        for m in range(12):
-            bars = []
-            for a in accs:
-                P = period(a['days'], iso(self.y, m, 1), iso(self.y, m, 31))
-                p = P['pct'] if P['up'] or P['down'] else None
-                bars.append((p, '%s · %s %d: %s (%s)' % (a['name'], MONTHS[m], self.y, fmt_pct(p),
-                                                          fmt_amt(P['pl'], a['currency'])) if p is not None else None))
-            monthly.append((MONTHS[m][:3], bars))
-        parts = [self.legend()] if len(accs) > 1 else []
-        parts += [self.bar_chart('Daily profit %% · %s %d' % (MONTHS[self.m], self.y), daily),
-                  self.bar_chart('Monthly profit %% · %d' % self.y, monthly),
-                  self.compare_table()]
-        return ft.Column(parts, spacing=16)
+        """The selected day, month or year of every account side by side: one bar each, plus a table."""
+        frm, to = self.compare_bounds()
+        if self.cmode == 'day':
+            title = 'Daily profit %% · %s' % self.date().strftime('%A %d %B %Y')
+        elif self.cmode == 'month':
+            title = 'Monthly profit %% · %s %d' % (MONTHS[self.m], self.y)
+        else:
+            title = 'Yearly profit %% · %d' % self.y
+        groups = []
+        for i, a in enumerate(self.accounts):
+            P = period(a['days'], frm, to)
+            traded = P['up'] or P['down'] or P['trades']
+            p = P['pct'] if traded else None
+            tip = '%s: %s (%s)' % (a['name'], fmt_pct(p), fmt_amt(P['pl'], a['currency'])) if traded else None
+            groups.append((a['name'], [(p, tip, self.series_color(i))]))
+        modes = ft.SegmentedButton(segments=[ft.Segment('day', label=ft.Text('Day')),
+                                             ft.Segment('month', label=ft.Text('Month')),
+                                             ft.Segment('year', label=ft.Text('Year'))],
+                                   selected=[self.cmode], show_selected_icon=False, on_change=self.on_cmode)
+        return ft.Column([modes, self.bar_chart(title, groups, values=True), self.compare_table(frm, to)], spacing=16)
 
-    def legend(self):
-        return ft.Row([ft.Row([ft.Container(width=12, height=12, border_radius=3, bgcolor=self.series_color(i)),
-                               self.text(a['name'], 13)], spacing=6, tight=True)
-                       for i, a in enumerate(self.accounts)], spacing=18, wrap=True)
+    def on_cmode(self, e):
+        self.cmode = e.control.selected[0] if e.control.selected else self.cmode
+        if self.cmode == 'day':  # a day without trades shows nothing: start at the last trading day up to it
+            days = [d for d in self.trading_days() if d <= self.date().isoformat()]
+            if days and days[-1] != self.date().isoformat():
+                self.y, self.m, self.d = int(days[-1][:4]), int(days[-1][5:7]) - 1, int(days[-1][8:])
+        self.render()
 
-    def bar_chart(self, title, groups):
-        """groups: [(label, [(pct or None, tooltip) per account])]: one bar per account from the zero line."""
+    def bar_chart(self, title, groups, values=False):
+        """groups: [(label, [(pct or None, tooltip, colour)])]: bars from the zero line, side by side per group.
+        values: the % written at the end of each bar (for a few bars)."""
         C = self.C
         head = self.text(title, weight=ft.FontWeight.W_600)
-        vals = [p for _, bars in groups for p, _ in bars if p is not None]
+        vals = [p for _, bars in groups for p, _, _ in bars if p is not None]
         if not vals:
             return self.box(ft.Column([head, self.text('No trades in this period.', 12, C['muted'])]))
         hi, lo = max(0.0, max(vals)), max(0.0, -min(vals))
         step = nice_step(max(hi + lo, 0.01))
         top, bottom = math.ceil(hi / step - 1e-9) * step, math.ceil(lo / step - 1e-9) * step
         top = top or (0 if bottom else step)
-        scale = CHART_H / (top + bottom)
-        zero = top * scale
+        pad = 22 if values else 0  # room for the value above / below a bar
+        scale = (CHART_H - 2 * pad) / (top + bottom)
+        zero = pad + top * scale
         ticks = [k * step for k in range(-round(bottom / step), round(top / step) + 1)]
         grid = [ft.Container(left=0, right=0, top=min(CHART_H - 1, zero - t * scale), height=1,
                              bgcolor=C['muted'] if abs(t) < 1e-9 else C['line']) for t in ticks]
@@ -410,49 +436,118 @@ class App:
         cols = []
         for label, bars in groups:
             row = []
-            for i, (p, tip) in enumerate(bars):
+            for p, tip, color in bars:
                 if p is None:
                     row.append(ft.Container(expand=1))
                     continue
                 h = max(1.0, abs(p) * scale)
-                radius = (ft.BorderRadius.only(top_left=4, top_right=4) if p >= 0
+                up = p >= 0
+                radius = (ft.BorderRadius.only(top_left=4, top_right=4) if up
                           else ft.BorderRadius.only(bottom_left=4, bottom_right=4))
-                bar = ft.Container(height=h, bgcolor=self.series_color(i), border_radius=radius)
+                bar = ft.Container(height=h, bgcolor=color, border_radius=radius)
+                parts = [ft.Container(height=zero - h if up else zero), bar]
+                if values:
+                    num = ft.Container(self.text(fmt_pct(p), 12, weight=ft.FontWeight.W_600), height=pad,
+                                       alignment=ft.Alignment.BOTTOM_CENTER if up else ft.Alignment.TOP_CENTER)
+                    parts = ([ft.Container(height=zero - h - pad), num, bar] if up
+                             else [ft.Container(height=zero), bar, num])
                 # the whole column is the hover target, bigger than a thin bar
-                row.append(ft.Container(ft.Column([ft.Container(height=zero - h if p >= 0 else zero), bar],
-                                                  spacing=0), expand=1, height=CHART_H, tooltip=tip))
-            cols.append(ft.Container(ft.Row(row, spacing=2), expand=1, padding=ft.Padding.symmetric(horizontal=3)))
+                row.append(ft.Container(ft.Column(parts, spacing=0, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+                                        expand=1, height=CHART_H, tooltip=tip))
+            inner = ft.Row(row, spacing=2)
+            if values:  # few groups: keep the bars thin instead of filling the width
+                inner = ft.Container(inner, width=72 * len(row))
+            cols.append(ft.Container(inner, expand=1, alignment=ft.Alignment.TOP_CENTER,
+                                     padding=ft.Padding.symmetric(horizontal=3)))
         plot = ft.Stack(grid + [ft.Row(cols, spacing=0, left=0, right=0, top=0, bottom=0)], height=CHART_H, expand=True)
-        labels = ft.Row([ft.Container(self.text(label, 11, C['muted']), expand=1, alignment=ft.Alignment.CENTER)
-                         for label, _ in groups], spacing=0, expand=True)
+        labels = ft.Row([ft.Container(self.text(label, 12, C['muted'], max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                                                text_align=ft.TextAlign.CENTER),
+                                      expand=1, alignment=ft.Alignment.CENTER) for label, _ in groups],
+                        spacing=0, expand=True)
         return self.box(ft.Column([
             head,
             ft.Row([ft.Stack(axis, width=AXIS_W, height=CHART_H), plot], spacing=0),
             ft.Row([ft.Container(width=AXIS_W), labels], spacing=0),
         ], spacing=10), padding=ft.Padding.only(left=8, right=16, top=12, bottom=12))
 
-    def compare_table(self):
+    def compare_table(self, frm, to):
         """The same numbers as a table: identity and values without relying on colour."""
-        C, mfrm, mto = self.C, iso(self.y, self.m, 1), iso(self.y, self.m, 31)
-        cols = [('Account', 4), ('%s %%' % MONTHS[self.m][:3], 2), ('%s P/L' % MONTHS[self.m][:3], 3),
-                ('%d %%' % self.y, 2), ('Win / loss days', 2), ('Best day', 2), ('Worst day', 2)]
+        C, day = self.C, self.cmode == 'day'
+        cols = [('Account', 4), ('Profit %', 2), ('P/L', 3), ('Closed trades', 2)]
+        cols += [('Start balance', 3)] if day else [('Win / loss days', 2), ('Best day', 2), ('Worst day', 2)]
         rows = [ft.Row([self.text(t, 12, C['muted'], expand=w) for t, w in cols])]
         for i, a in enumerate(self.accounts):
-            M, Y = period(a['days'], mfrm, mto), period(a['days'], iso(self.y, 0, 1), iso(self.y, 11, 31))
-            pcts = [day_pct(v) for d, v in a['days'].items() if mfrm <= d <= mto and v['pl']]
-            pcts = [p for p in pcts if p is not None]
-            best, worst = (max(pcts), min(pcts)) if pcts else (None, None)
-            cells = [fmt_pct(M['pct']) or '-', fmt_amt(M['pl'], a['currency']) if M['up'] or M['down'] else '-',
-                     fmt_pct(Y['pct']) or '-', '%d / %d' % (M['up'], M['down']),
-                     fmt_pct(best) or '-', fmt_pct(worst) or '-']
-            signs = [M['pl'], M['pl'], Y['pl'], 0, best or 0, worst or 0]
+            P = period(a['days'], frm, to)
+            traded = P['up'] or P['down'] or P['trades']
+            cells = [((fmt_pct(P['pct']) if traded else '') or '-', P['pl']),
+                     (fmt_amt(P['pl'], a['currency']) if traded else '-', P['pl']), (str(P['trades']), 0)]
+            if day:
+                v = a['days'].get(frm)
+                cells.append(('{:,.2f} {}'.format(v['start'], a['currency']) if v else '-', 0))
+            else:
+                pcts = [p for p in (day_pct(v) for d, v in a['days'].items() if frm <= d <= to and v['pl'])
+                        if p is not None]
+                best, worst = (max(pcts), min(pcts)) if pcts else (None, None)
+                cells += [('%d / %d' % (P['up'], P['down']), 0), (fmt_pct(best) or '-', best or 0),
+                          (fmt_pct(worst) or '-', worst or 0)]
             rows.append(ft.Container(ft.Row(
                 [ft.Row([ft.Container(width=12, height=12, border_radius=3, bgcolor=self.series_color(i)),
                          self.text(a['name'], 13, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS, expand=True)],
                         spacing=8, expand=cols[0][1])]
-                + [self.text(v, 13, self.sign_color(s), expand=w) for v, s, (_, w) in zip(cells, signs, cols[1:])]),
+                + [self.text(v, 13, self.sign_color(s), expand=w) for (v, s), (_, w) in zip(cells, cols[1:])]),
                 border=ft.Border.only(top=ft.BorderSide(1, C['line'])), padding=ft.Padding.symmetric(vertical=8)))
         return self.box(ft.Column(rows, spacing=0))
+
+    # ------------------------------------------------------------------ dates and suggestions
+    def period_label(self):
+        if self.view == 'year' or (self.view == 'compare' and self.cmode == 'year'):
+            return str(self.y)
+        if self.view == 'compare' and self.cmode == 'day':
+            return self.date().strftime('%d %b %Y')
+        return '%s %d' % (MONTHS[self.m], self.y)
+
+    def pick_date(self, e=None, value=None, on_pick=None):
+        """Calendar picker; on_pick(date), by default the date shown by the views."""
+        def chosen(ev):
+            v = ev.control.value
+            if v:
+                (on_pick or self.set_date)(dt.date(v.year, v.month, v.day))
+
+        today = dt.date.today()
+        start = value or self.date()
+        self.page.show_dialog(ft.DatePicker(value=dt.datetime(start.year, start.month, start.day),
+                                            first_date=dt.datetime(2000, 1, 1),
+                                            last_date=dt.datetime(today.year + 1, 12, 31), on_change=chosen))
+
+    def set_date(self, d):
+        self.y, self.m, self.d = d.year, d.month - 1, d.day
+        self.render()
+
+    def suggest(self, field, value):
+        """Shell-like ghost text: an empty field shows `value` greyed out; Tab or the right arrow takes it."""
+        field.hint_text = value or None
+        if value:
+            self.suggestions[id(field)] = (field, value)
+        else:
+            self.suggestions.pop(id(field), None)
+        field.on_focus = lambda e: setattr(self, 'focused', field)
+        field.on_blur = lambda e: self.left(field)
+
+    def left(self, field):
+        self.blurred = (field, time.monotonic())  # Tab moves the focus on before its key event arrives
+        if self.focused is field:
+            self.focused = None
+
+    def on_key(self, e):
+        if e.key not in ('Tab', 'Arrow Right') or e.shift or e.ctrl:
+            return
+        field = self.focused
+        if field is None and self.blurred[0] is not None and time.monotonic() - self.blurred[1] < 0.5:
+            field = self.blurred[0]
+        hit = self.suggestions.get(id(field)) if field is not None else None
+        if hit and not field.value:
+            field.value = hit[1]
+            self.page.update()
 
     def note(self):
         stale = [a['name'] for a in self.accounts if a.get('stale')]
@@ -489,16 +584,19 @@ class App:
         self.render()
 
     def step(self, d):
-        if self.view == 'year':
+        if self.view == 'compare' and self.cmode == 'day':  # to the previous / next day with trades
+            here = self.date().isoformat()
+            days = [x for x in self.trading_days() if (x > here if d > 0 else x < here)]
+            nxt = dt.date.fromisoformat(days[0] if d > 0 else days[-1]) if days else self.date() + dt.timedelta(days=d)
+            return self.set_date(nxt)
+        if self.view == 'year' or (self.view == 'compare' and self.cmode == 'year'):
             self.y += d
         else:
             self.y, self.m = divmod(self.y * 12 + self.m + d, 12)
         self.render()
 
     def on_today(self, e):
-        t = dt.date.today()
-        self.y, self.m = t.year, t.month - 1
-        self.render()
+        self.set_date(dt.date.today())
 
     def on_theme(self, e):
         self.dark = not self.dark
@@ -543,21 +641,21 @@ class Settings:
         self.app, self.store, self.page = app, app.store, app.page
         self.editing, self.changed = None, False
         self.term = ft.TextField(label='Or an existing monitoring terminal: terminal64.exe path',
-                                 value=self.store.get('terminal_path'), hint_text=r'C:\MT5-Monitor\terminal64.exe',
-                                 dense=True, expand=True)
+                                 value=self.store.get('terminal_path'), dense=True, expand=True)
         self.term_box = ft.Column(spacing=8)
         self.auto = ft.TextField(label='Auto refresh, minutes (0 = off)', value=str(app.minutes()), dense=True,
                                  width=260, keyboard_type=ft.KeyboardType.NUMBER,
                                  input_filter=ft.NumbersOnlyInputFilter())
         self.rows = ft.Column(spacing=0)
-        self.name = ft.TextField(label='Name', hint_text='Vantage', dense=True, expand=True)
-        self.login = ft.TextField(label='Login', hint_text='12345678', dense=True, expand=True,
+        self.name = ft.TextField(label='Name', dense=True, expand=True)
+        self.login = ft.TextField(label='Login', dense=True, expand=True,
                                   keyboard_type=ft.KeyboardType.NUMBER, input_filter=ft.NumbersOnlyInputFilter())
-        self.server = ft.TextField(label='Server', hint_text='VantageInternational-Live 3', dense=True, expand=True)
+        self.server = ft.TextField(label='Server', dense=True, expand=True)
         self.password = ft.TextField(label='Investor password (optional)', password=True, can_reveal_password=True,
                                      dense=True, expand=True)
-        self.start = ft.TextField(label='Count from (YYYY-MM-DD, optional)', hint_text='2026-09-01', dense=True,
-                                  width=260)
+        self.start = ft.TextField(label='Count from (optional)', dense=True, width=240,
+                                  suffix_icon=ft.IconButton(ft.Icons.CALENDAR_MONTH, tooltip='Pick a date',
+                                                            on_click=self.pick_start))
         self.enabled = ft.Checkbox(label='Include in the dashboard', value=True)
         self.form_title = ft.Text('Add account', size=12, weight=ft.FontWeight.W_600)
         self.cancel = ft.TextButton('Cancel', visible=False, on_click=lambda e: self.reset())
@@ -588,8 +686,8 @@ class Settings:
             ft.Row([self.server, self.password]),
             ft.Row([self.start, self.enabled, ft.Container(expand=True), self.cancel, self.save]),
             ft.Text('Count from: only the history from that date counts (calendar, Compare, totals), e.g. for an old '
-                    'account that traded another strategy before. Empty = the whole history.', size=12,
-                    color=app.C['muted']),
+                    'account that traded another strategy before. Empty = the whole history. Grey text in an empty '
+                    'field is a suggestion: press Tab or → to use it.', size=12, color=app.C['muted']),
             ft.Text('Investor (read-only) password only, and only when it is not saved in the monitoring terminal. It '
                     'is stored encrypted for your Windows user and never shown again; leave it empty when editing to '
                     'keep it.', size=12, color=app.C['muted']),
@@ -601,6 +699,9 @@ class Settings:
             content=content, on_dismiss=self.on_dismiss)
         self.show_terminal()
         self.show_accounts()
+        self.suggest_form()
+        mon = [p for p in (Path(r'C:\MT5-Monitor\terminal64.exe'), ROOT / 'mt5' / 'terminal64.exe') if p.is_file()]
+        app.suggest(self.term, str(mon[-1]) if mon and not self.term.value else None)
 
     def open(self):
         self.page.show_dialog(self.dlg)
@@ -718,7 +819,35 @@ class Settings:
         self.enabled.value = True
         self.form_title.value = self.save.content = 'Add account'
         self.cancel.visible = False
+        self.suggest_form()
         self.page.update()
+
+    def suggest_form(self, editing=None):
+        """Suggestions: a new form offers the next account logged in to the monitoring terminal but not added yet;
+        Count from offers the account's last deposit (a new strategy usually starts with one)."""
+        app, path = self.app, self.store.get('terminal_path')
+        if editing:
+            for f in (self.name, self.login, self.server):
+                app.suggest(f, None)
+            app.suggest(self.start, last_deposit(editing))
+            return
+        known = {(a['login'], a['server']) for a in self.store.accounts()}
+        new = [a for a in monitor.accounts(path) if a not in known] if path and Path(path).is_file() else []
+        login, server = new[0] if new else (None, None)
+        app.suggest(self.name, monitor.broker(server) if server else None)
+        app.suggest(self.login, str(login) if login else None)
+        app.suggest(self.server, server)
+        app.suggest(self.start, None)
+
+    def pick_start(self, e):
+        def chosen(d):
+            self.start.value = d.isoformat()
+            self.page.update()
+        try:
+            value = dt.date.fromisoformat(self.start.value or self.start.hint_text or '')
+        except ValueError:
+            value = dt.date.today()
+        self.app.pick_date(value=value, on_pick=chosen)
 
     def edit(self, a):
         self.editing = a['id']
@@ -727,6 +856,7 @@ class Settings:
         self.form_title.value = 'Edit %s' % a['name']
         self.save.content = 'Save'
         self.cancel.visible = True
+        self.suggest_form(editing=a)
         self.page.update()
 
     def on_terminal(self, e):
